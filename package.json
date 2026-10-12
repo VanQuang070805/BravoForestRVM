@@ -1,0 +1,28 @@
+{
+  "name": "bravoforest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nền tảng đổi vỏ chai lấy điểm BravoForest và hệ thống quản lý máy RVM",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,worker,customer,admin,kiosk -c green,blue,cyan,magenta,yellow \"npm run start:dev -w @bravoforest/api\" \"npm run worker:dev -w @bravoforest/api\" \"npm run dev -w @bravoforest/customer-web\" \"npm run dev -w @bravoforest/admin-web\" \"npm run dev -w @bravoforest/rvm-kiosk\"",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e -w @bravoforest/api",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=20.11",
+    "npm": ">=10"
+  },
+  "devDependencies": {
+    "caniuse-lite": "^1.0.30001815",
+    "concurrently": "^9.1.2",
+    "prettier": "^3.5.3"
+  }
+}

@@ -1,0 +1,54 @@
+name: bravoforest-prod
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: "${MARIADB_DATABASE:-BravoForest}"
+      MARIADB_USER: "${MARIADB_USER:?Set MARIADB_USER in .env.prod}"
+      MARIADB_PASSWORD: "${MARIADB_PASSWORD:?Set MARIADB_PASSWORD in .env.prod}"
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD in .env.prod}"
+    volumes: [mariadb_data:/var/lib/mysql]
+    healthcheck: { test: [CMD, healthcheck.sh, --connect, --innodb_initialized], interval: 10s, timeout: 5s, retries: 10 }
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment: { REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}" }
+    command: [sh, -c, 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"']
+    volumes: [redis_data:/data]
+    healthcheck: { test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG'], interval: 10s, timeout: 5s, retries: 10 }
+  api:
+    build: { context: .., dockerfile: infrastructure/docker/api.Dockerfile }
+    restart: unless-stopped
+    env_file: [.env.prod]
+    depends_on: { mariadb: { condition: service_healthy }, redis: { condition: service_healthy } }
+    healthcheck: { test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"], interval: 20s, timeout: 5s, retries: 5 }
+  worker:
+    build: { context: .., dockerfile: infrastructure/docker/api.Dockerfile }
+    command: node dist/worker.js
+    restart: unless-stopped
+    env_file: [.env.prod]
+    depends_on: { mariadb: { condition: service_healthy }, redis: { condition: service_healthy } }
+  customer-web:
+    build: { context: .., dockerfile: infrastructure/docker/customer-web.Dockerfile }
+    restart: unless-stopped
+    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
+    depends_on: { api: { condition: service_healthy } }
+  admin-web:
+    build: { context: .., dockerfile: infrastructure/docker/admin-web.Dockerfile }
+    restart: unless-stopped
+    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
+    depends_on: { api: { condition: service_healthy } }
+  rvm-kiosk:
+    build: { context: .., dockerfile: infrastructure/docker/rvm-kiosk.Dockerfile }
+    restart: unless-stopped
+    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
+    depends_on: { api: { condition: service_healthy } }
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["80:80","443:443"]
+    volumes: [./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,./nginx/sites:/etc/nginx/conf.d:ro,./certs:/etc/nginx/certs:ro]
+    depends_on: { api: { condition: service_healthy }, customer-web: { condition: service_started }, admin-web: { condition: service_started }, rvm-kiosk: { condition: service_started } }
+volumes: { mariadb_data: {name: bravoforest_prod_mariadb_data}, redis_data: {name: bravoforest_prod_redis_data} }

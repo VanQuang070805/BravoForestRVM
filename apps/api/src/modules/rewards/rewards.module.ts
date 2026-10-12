@@ -1,0 +1,1 @@
+import { Module } from '@nestjs/common'; import { BullModule } from '@nestjs/bullmq'; import { RewardsController } from './rewards.controller'; import { RewardsService } from './rewards.service'; @Module({imports:[BullModule.registerQueue({name:'bravoforest'})],controllers:[RewardsController],providers:[RewardsService]}) export class RewardsModule{}

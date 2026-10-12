@@ -1,0 +1,2 @@
+import { IsBoolean, IsNumber, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+export class UpdateLocationDto{@IsOptional()@IsString()@Length(2,150)name?:string;@IsOptional()@IsString()@Length(3,255)address?:string;@IsOptional()@IsString()ward?:string;@IsOptional()@IsString()district?:string;@IsOptional()@IsString()city?:string;@IsOptional()@IsNumber()@Min(-90)@Max(90)latitude?:number;@IsOptional()@IsNumber()@Min(-180)@Max(180)longitude?:number;@IsOptional()@IsBoolean()isActive?:boolean;}

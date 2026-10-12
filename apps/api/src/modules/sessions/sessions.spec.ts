@@ -1,0 +1,2 @@
+import { BadRequestException } from '@nestjs/common'; import { assertSingleOutcome } from './sessions.service';
+describe('deposit outcome invariant',()=>{it('accepts exactly one outcome',()=>{expect(()=>assertSingleOutcome(1,undefined)).not.toThrow();expect(()=>assertSingleOutcome(undefined,2)).not.toThrow();});it('rejects zero or two outcomes',()=>{expect(()=>assertSingleOutcome()).toThrow(BadRequestException);expect(()=>assertSingleOutcome(1,2)).toThrow(BadRequestException);});});

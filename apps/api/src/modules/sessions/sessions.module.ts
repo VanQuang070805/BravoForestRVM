@@ -1,0 +1,2 @@
+import { Module } from '@nestjs/common'; import { BullModule } from '@nestjs/bullmq'; import { MachinesModule } from '../machines/machines.module'; import { SessionsController } from './sessions.controller'; import { SessionsService } from './sessions.service';
+@Module({imports:[MachinesModule,BullModule.registerQueue({name:'bravoforest'})],controllers:[SessionsController],providers:[SessionsService]}) export class SessionsModule{}

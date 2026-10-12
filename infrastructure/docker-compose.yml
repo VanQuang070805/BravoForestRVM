@@ -1,0 +1,20 @@
+name: bravoforest-local
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
+    name: bravoforest_local_redis_data

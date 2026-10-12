@@ -1,0 +1,5 @@
+'use client';
+import { useCallback,useEffect,useState } from 'react';
+import { ApiError,apiGet } from './api';
+export function useApi<T>(path:string,enabled=true){const [data,setData]=useState<T>();const [loading,setLoading]=useState(enabled);const [error,setError]=useState('');const [version,setVersion]=useState(0);const refresh=useCallback(()=>setVersion(v=>v+1),[]);useEffect(()=>{if(!enabled){setLoading(false);return}let active=true;setLoading(true);setError('');apiGet<T>(path).then(v=>{if(active)setData(v)}).catch(e=>{if(active){setError(e instanceof ApiError?e.message:'Không thể tải dữ liệu.');setData(undefined)}}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[path,enabled,version]);return{data,loading,error,refresh,setData}}
+export function rowsFrom<T>(value:unknown):T[]{if(Array.isArray(value))return value as T[];if(value&&typeof value==='object'){const item=value as {items?:unknown;data?:unknown;rows?:unknown};for(const candidate of [item.items,item.data,item.rows])if(Array.isArray(candidate))return candidate as T[]}return[]}

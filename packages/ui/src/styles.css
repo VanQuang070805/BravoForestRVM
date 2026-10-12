@@ -1,0 +1,386 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Manrope:wght@600;700;800&display=swap');
+
+:root {
+  /* Tomorro Signature Palette */
+  --ink: #0d1a13;
+  --ink-secondary: #4a5c51;
+  --muted: #718478;
+  --line: #e3eae4;
+  --line-dark: rgba(255, 255, 255, 0.1);
+  --paper: #f8faf8;
+  --white: #ffffff;
+  
+  /* Brand Green Tones (Tomorro inspired) */
+  --forest: #0b1f16;
+  --forest-dark: #06130d;
+  --forest-card: #0e271c;
+  --forest-surface: #133325;
+  --forest-border: rgba(39, 209, 124, 0.2);
+  
+  /* Electric Fluo & Lime Accents */
+  --leaf: #27d17c;
+  --leaf-hover: #31e58b;
+  --lime: #cbf565;
+  --lime-hover: #daf984;
+  --mint: #eef7ee;
+  --mint-light: #f4fbf4;
+  
+  /* Shadows & Glows */
+  --shadow-sm: 0 2px 8px rgba(11, 31, 22, 0.04);
+  --shadow-md: 0 10px 30px rgba(11, 31, 22, 0.06);
+  --shadow-lg: 0 20px 50px rgba(11, 31, 22, 0.09);
+  --shadow-glow: 0 0 25px rgba(39, 209, 124, 0.35);
+  --shadow-glow-lime: 0 0 30px rgba(203, 245, 101, 0.3);
+  --shadow: 0 18px 50px rgba(11, 31, 22, 0.07);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14.5px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Tomorro Display Typography */
+.font-display {
+  font-family: 'Barlow Condensed', 'Manrope', -apple-system, sans-serif;
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 0.94;
+}
+
+/* Button variants - Tomorro pill style */
+.button {
+  border: 0;
+  border-radius: 9999px;
+  padding: 11px 22px;
+  font-weight: 700;
+  font-size: 13.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  letter-spacing: -0.01em;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(11, 31, 22, 0.12);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.button-dark {
+  background: var(--forest);
+  color: var(--white);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.button-dark:hover {
+  background: var(--forest-card);
+  border-color: rgba(39, 209, 124, 0.4);
+  box-shadow: 0 8px 24px rgba(11, 31, 22, 0.25);
+}
+
+.button-lime {
+  background: var(--lime);
+  color: #071910;
+  box-shadow: 0 4px 18px rgba(203, 245, 101, 0.35);
+}
+
+.button-lime:hover {
+  background: var(--lime-hover);
+  box-shadow: 0 8px 26px rgba(203, 245, 101, 0.5);
+}
+
+.button-green {
+  background: var(--leaf);
+  color: #06170e;
+  box-shadow: 0 4px 18px rgba(39, 209, 124, 0.35);
+}
+
+.button-green:hover {
+  background: var(--leaf-hover);
+  box-shadow: 0 8px 26px rgba(39, 209, 124, 0.5);
+}
+
+.button-light {
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.button-light:hover {
+  background: var(--mint-light);
+  border-color: #bcd4c1;
+}
+
+.button-ghost {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--white);
+  backdrop-filter: blur(8px);
+}
+
+.button-ghost:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: var(--leaf);
+  color: var(--leaf);
+}
+
+/* Card components */
+.card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.card-dark {
+  background: var(--forest-card);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+}
+
+/* Pill status tags */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9999px;
+  padding: 5px 12px;
+  background: #edf2ee;
+  color: #55665b;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pill-green {
+  background: rgba(39, 209, 124, 0.12);
+  color: #1f8b52;
+  border: 1px solid rgba(39, 209, 124, 0.25);
+}
+
+.pill-amber {
+  background: #fff6e0;
+  color: #9c6c0e;
+  border: 1px solid #fae29f;
+}
+
+.pill-red {
+  background: #ffece6;
+  color: #b54a32;
+  border: 1px solid #f9cdbf;
+}
+
+/* Metric card */
+.metric {
+  min-height: 136px;
+  background: #ffffff;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.metric-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--mint);
+  color: var(--forest);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+.metric strong {
+  display: block;
+  margin: 14px 0 4px;
+  font: 800 32px 'Manrope', sans-serif;
+  letter-spacing: -1.2px;
+  color: var(--ink);
+}
+
+.metric small {
+  color: #2e8b5a;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Form fields */
+.field {
+  display: grid;
+  gap: 8px;
+  color: #4b5d52;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.field input, .field select {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--ink);
+  outline: none;
+  font-size: 13.5px;
+  transition: all 0.2s ease;
+}
+
+.field input:focus, .field select:focus {
+  border-color: var(--leaf);
+  box-shadow: 0 0 0 3px rgba(39, 209, 124, 0.15);
+}
+
+/* Page titles */
+.page-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 8px 0 28px;
+}
+
+.page-title h1 {
+  margin: 6px 0;
+  font: 800 clamp(26px, 3.5vw, 36px) 'Manrope', sans-serif;
+  letter-spacing: -1.2px;
+  color: var(--ink);
+}
+
+.page-title p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 600px;
+  font-size: 14px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #5c7e68;
+}
+
+/* Tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.data-table th {
+  padding: 13px 14px;
+  color: #7b8d81;
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  font-weight: 800;
+  border-bottom: 1px solid #edf1ee;
+}
+
+.data-table td {
+  padding: 15px 14px;
+  border-top: 1px solid #edf1ee;
+  color: var(--ink);
+}
+
+.data-table tr:hover td {
+  background: #fafcfa;
+}
+
+/* Chart bars */
+.chart {
+  height: 160px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 20px 8px 0;
+  background: linear-gradient(to bottom, transparent 32%, #edf2ee 33%, transparent 34%, transparent 65%, #edf2ee 66%, transparent 67%);
+}
+
+.chart span {
+  flex: 1;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, #5ecf8c, #1a5636);
+  min-height: 12px;
+  animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.chart span:hover {
+  transform: scaleY(1.06);
+  opacity: 0.9;
+}
+
+.chart span:nth-child(2n) {
+  background: linear-gradient(180deg, #cbf565, #24814e);
+}
+
+@keyframes rise {
+  from { height: 0; opacity: 0.2; }
+}
+
+.fade-in {
+  animation: fade 0.4s ease both;
+}
+
+@keyframes fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media(prefers-reduced-motion: reduce) {
+  *, *:before, *:after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

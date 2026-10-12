@@ -1,0 +1,1 @@
+import{Module}from'@nestjs/common';import{MachinesModule}from'../machines/machines.module';import{SensorsController}from'./sensors.controller';import{SensorsService}from'./sensors.service';@Module({imports:[MachinesModule],controllers:[SensorsController],providers:[SensorsService]})export class SensorsModule{}

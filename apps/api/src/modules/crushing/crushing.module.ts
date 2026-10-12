@@ -1,0 +1,1 @@
+import { Module } from '@nestjs/common';import { MachinesModule } from '../machines/machines.module';import { CrushingController } from './crushing.controller';import { CrushingService } from './crushing.service';@Module({imports:[MachinesModule],controllers:[CrushingController],providers:[CrushingService]})export class CrushingModule{}
