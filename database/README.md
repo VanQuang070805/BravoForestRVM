@@ -5,10 +5,10 @@
 ## Dữ liệu khởi tạo
 
 - Ba vai trò hệ thống: `CUSTOMER`, `ADMIN`, `TECHNICIAN`. Đây là dữ liệu tham chiếu bắt buộc của khóa ngoại `users.role_id`.
-- Một tài khoản duy nhất: `admin@bravoforest.local` / `Admin@123456`.
+- Một tài khoản admin khởi tạo: `admin@bravoforest.local`. Không có mật khẩu mặc định được công bố.
 - Không có dữ liệu mẫu về khách hàng, máy, địa điểm, vật liệu, quy tắc điểm, voucher hoặc giao dịch.
 
-Đổi mật khẩu admin ngay sau lần đăng nhập đầu tiên.
+Sau khi import, dùng lệnh `admin:set-password` trong [apps/api/README.md](../apps/api/README.md) để đặt mật khẩu admin trước khi đăng nhập.
 
 ## Dữ liệu cấu hình tối thiểu
 

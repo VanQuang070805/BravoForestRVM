@@ -9,8 +9,35 @@ import { REDIS } from '../../common/redis.module';
 import { User } from '../../database/core.entity';
 import { LoginDto, RegisterDto } from './auth.dto';
 
-type RefreshPayload = { sub?: string; jti?: string };
+type RefreshPayload = { sub?: string; jti?: string; sid?: string };
 type TokenResponse = { accessToken: string; refreshToken: string; expiresIn: string };
+
+const CREATE_REFRESH_SESSION_SCRIPT = `
+  if redis.call('exists', KEYS[1]) == 1 or redis.call('exists', KEYS[2]) == 1 then
+    return 0
+  end
+  redis.call('set', KEYS[1], 'active', 'EX', ARGV[1])
+  redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[1])
+  return 1
+`;
+
+const ROTATE_REFRESH_TOKEN_SCRIPT = `
+  if redis.call('get', KEYS[1]) ~= 'active' then return 0 end
+  if redis.call('get', KEYS[2]) ~= ARGV[1] then return 0 end
+  if redis.call('exists', KEYS[3]) == 1 then return 0 end
+  redis.call('del', KEYS[2])
+  redis.call('set', KEYS[3], ARGV[2], 'EX', ARGV[3])
+  redis.call('expire', KEYS[1], ARGV[3])
+  return 1
+`;
+
+const REVOKE_REFRESH_SESSION_SCRIPT = `
+  if redis.call('get', KEYS[1]) == 'active' then
+    redis.call('set', KEYS[1], 'revoked', 'EX', ARGV[1])
+  end
+  redis.call('del', KEYS[2])
+  return 1
+`;
 
 const duplicateKey = (error: unknown) =>
   typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === 'ER_DUP_ENTRY';
@@ -77,7 +104,11 @@ export class AuthService {
     return this.tokens(String(user.id));
   }
 
-  private async tokens(userId: string): Promise<TokenResponse> {
+  private async tokens(
+    userId: string,
+    sessionId: string = randomUUID(),
+    rotateFrom?: { jti: string; digest: string },
+  ): Promise<TokenResponse> {
     const accessJti = randomUUID();
     const refreshJti = randomUUID();
     const accessTtl = process.env.JWT_ACCESS_TTL ?? '15m';
@@ -94,11 +125,32 @@ export class AuthService {
       { secret: process.env.JWT_ACCESS_SECRET, expiresIn: accessTtl as never },
     );
     const refreshToken = await this.jwt.signAsync(
-      { sub: userId, role: user.role_name, jti: refreshJti },
+      { sub: userId, role: user.role_name, jti: refreshJti, sid: sessionId },
       { secret: process.env.JWT_REFRESH_SECRET, expiresIn: refreshTtlSeconds },
     );
     const tokenDigest = createHash('sha256').update(refreshToken).digest('hex');
-    await this.redis.set(`refresh:${refreshJti}`, tokenDigest, 'EX', refreshTtlSeconds, 'NX');
+    const saved = rotateFrom
+      ? await this.redis.eval(
+          ROTATE_REFRESH_TOKEN_SCRIPT,
+          3,
+          `refresh-session:${sessionId}`,
+          `refresh:${rotateFrom.jti}`,
+          `refresh:${refreshJti}`,
+          rotateFrom.digest,
+          tokenDigest,
+          String(refreshTtlSeconds),
+        )
+      : await this.redis.eval(
+          CREATE_REFRESH_SESSION_SCRIPT,
+          2,
+          `refresh-session:${sessionId}`,
+          `refresh:${refreshJti}`,
+          String(refreshTtlSeconds),
+          tokenDigest,
+        );
+    if (Number(saved) !== 1) {
+      throw new UnauthorizedException('Refresh session was revoked or already used');
+    }
     return { accessToken, refreshToken, expiresIn: accessTtl };
   }
 
@@ -110,7 +162,7 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
-    if (!payload.sub || !payload.jti) throw new UnauthorizedException('Invalid refresh token');
+    if (!payload.sub || !payload.jti || !payload.sid) throw new UnauthorizedException('Invalid refresh token');
 
     const [account] = await this.db.query(
       `SELECT user_id FROM users WHERE user_id=? AND status='ACTIVE' AND deleted_at IS NULL`,
@@ -122,23 +174,29 @@ export class AuthService {
     }
 
     const digest = createHash('sha256').update(token).digest('hex');
-    const consumed = await this.redis.eval(
-      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
-      1,
-      `refresh:${payload.jti}`,
-      digest,
-    );
-    if (Number(consumed) !== 1) throw new UnauthorizedException('Refresh token was already used or revoked');
-    return this.tokens(payload.sub);
+    return this.tokens(payload.sub, payload.sid, { jti: payload.jti, digest });
   }
 
   async logout(token?: string) {
     if (!token) return;
+    let payload: RefreshPayload;
     try {
-      const payload = await this.jwt.verifyAsync<RefreshPayload>(token, { secret: process.env.JWT_REFRESH_SECRET });
-      if (payload.jti) await this.redis.del(`refresh:${payload.jti}`);
+      payload = await this.jwt.verifyAsync<RefreshPayload>(token, { secret: process.env.JWT_REFRESH_SECRET });
     } catch {
-      // Expired or malformed tokens are already unusable.
+      return; // Expired or malformed tokens are already unusable.
+    }
+
+    if (payload.sid && payload.jti) {
+      const ttl = Number(process.env.JWT_REFRESH_TTL_SECONDS ?? 2_592_000);
+      await this.redis.eval(
+        REVOKE_REFRESH_SESSION_SCRIPT,
+        2,
+        `refresh-session:${payload.sid}`,
+        `refresh:${payload.jti}`,
+        String(ttl),
+      );
+    } else if (payload.jti) {
+      await this.redis.del(`refresh:${payload.jti}`);
     }
   }
 

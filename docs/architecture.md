@@ -35,6 +35,8 @@ flowchart LR
 ## Hướng production
 
 - Nginx kết thúc TLS, định tuyến và giới hạn kích thước request.
+- Ba hostname customer, admin và kiosk phải trỏ về máy chủ; chứng chỉ TLS cần có đủ ba hostname trong SAN và được đặt tại `infrastructure/certs/`.
+- Cấu hình Nginx chỉ thay thế ba biến hostname trong template, giữ nguyên các biến runtime như `$host` và `$request_uri`; host không được khai báo sẽ bị từ chối.
 - Mỗi web, API và worker chạy trong container riêng.
 - MariaDB và Redis dùng volume bền vững hoặc dịch vụ managed, đặt trong private network.
 - Secret được cấp qua secret manager của nền tảng triển khai; không build vào image.

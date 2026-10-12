@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import gsap from 'gsap';
 import { Button, Card, Pill } from '@bravoforest/ui';
-import { apiGet, apiPatch, apiPost, clearAccessToken, ApiError } from '../lib/api';
+import { apiGet, apiPatch, apiPost, clearAccessToken, markSignedOut, ApiError } from '../lib/api';
 import { useApi, rowsFrom } from '../lib/use-api';
 import { RvmMap } from './rvm-map';
 
@@ -29,9 +29,9 @@ const val = (o: Row, ...keys: string[]) => {
 const fmtDate = (v: any) => v ? new Date(v).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
 function ApiMessage({ loading, error, empty, children }: { loading: boolean; error: string; empty?: boolean; children: ReactNode }) {
-  if (loading) return <div className="tomorro-card" role="status" style={{ padding: 32, textAlign: 'center', color: '#9db4a6' }}>Loading telemetry data…</div>;
+  if (loading) return <div className="tomorro-card" role="status" style={{ padding: 32, textAlign: 'center', color: '#9db4a6' }}>Đang tải dữ liệu…</div>;
   if (error) return <div className="tomorro-card" role="alert" style={{ padding: 24, borderColor: '#f87171', color: '#fca5a5' }}><strong>Unable to fetch data</strong><p style={{ margin: '6px 0 0', color: '#f87171' }}>{error}</p></div>;
-  if (empty) return <div style={{ border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 16, padding: 36, textAlign: 'center', color: '#8aa192' }}>No entries recorded in this category yet.</div>;
+  if (empty) return <div style={{ border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 16, padding: 36, textAlign: 'center', color: '#8aa192' }}>Chưa có dữ liệu trong mục này.</div>;
   return <>{children}</>;
 }
 
@@ -89,7 +89,7 @@ function UnifiedNavbar({
           {user ? (
             <>
               <Link href="/wallet" className="tomorro-nav-balance" title="View Green Balance">
-                <span>✳</span> {(balance ?? 2480).toLocaleString()} pts
+                <span>✳</span> {(balance ?? 0).toLocaleString()} pts
               </Link>
               <div className="tomorro-nav-user">
                 <Link href="/profile" className="tomorro-user-avatar" title="Account Profile">
@@ -181,7 +181,7 @@ function UnifiedFooter() {
               <span style={{ color: 'var(--tomorro-fluo-green)', fontSize: 28, marginRight: 2 }}>✳</span> bravoforest
             </div>
             <p style={{ fontSize: 13.5, lineHeight: 1.6, maxWidth: 320, color: '#8da194' }}>
-              The pioneering Reverse Vending Machine (RVM) network accelerating the circular economy. Transforming post-consumer containers into verified environmental dividends.
+              BravoForest connects customers with reverse vending machines and a points wallet for eligible returns.
             </p>
           </div>
 
@@ -202,9 +202,7 @@ function UnifiedFooter() {
             <h4>RVM INFRASTRUCTURE</h4>
             <ul>
               <li><Link href="/machines">Interactive Kiosk Map</Link></li>
-              <li><Link href="/machine-login">Pair Infeed Session</Link></li>
-              <li><a href="#features">AI Spectral Optics</a></li>
-              <li><a href="#impact">Audited CO₂ Reductions</a></li>
+              <li><Link href="/machine-login">Link a machine session</Link></li>
             </ul>
           </div>
 
@@ -212,8 +210,8 @@ function UnifiedFooter() {
           <div className="tomorro-footer-col">
             <h4>PARTNERS & SUPPORT</h4>
             <ul>
-              <li><a href="mailto:partners@bravoforest.com">Brand Partnerships</a></li>
-              <li><a href="mailto:support@bravoforest.com">support@bravoforest.com</a></li>
+              <li><Link href="/machines">Return locations</Link></li>
+              <li><Link href="/rewards">Available vouchers</Link></li>
               <li><Link href="/profile">Account Settings</Link></li>
               <li><Link href="/login">Member Portal</Link></li>
             </ul>
@@ -222,7 +220,7 @@ function UnifiedFooter() {
 
         {/* Bottom Bar */}
         <div className="tomorro-footer-bottom">
-          <span>© 2026 BravoForest SAS. Autonomous Reverse Vending Network. Engineered with 3NF Schema & Tomorro Editorial Design.</span>
+          <span>© 2026 BravoForest. Recycling returns and customer rewards.</span>
           <div style={{ display: 'flex', gap: 20 }}>
             <Link href="/login">Sign In</Link>
             <Link href="/register">Create Account</Link>
@@ -240,6 +238,7 @@ function UnifiedFooter() {
 export function CustomerShell({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Row>();
   const [balance, setBalance] = useState<number>();
+  const [logoutMessage, setLogoutMessage] = useState('');
   const pathname = usePathname();
   const router = useRouter();
 
@@ -255,17 +254,26 @@ export function CustomerShell({ children }: { children: ReactNode }) {
       });
   }, [pathname]);
 
-  const logout = () => {
-    clearAccessToken();
-    setUser(undefined);
-    setBalance(undefined);
-    router.push('/login');
+  const logout = async () => {
+    markSignedOut();
+    try {
+      await apiPost('/auth/logout', {});
+      setLogoutMessage('');
+    } catch {
+      setLogoutMessage('Không thể xác nhận đăng xuất với máy chủ. Trình duyệt này sẽ không tự khôi phục phiên; hãy thử đăng nhập lại khi kết nối được khôi phục.');
+    } finally {
+      clearAccessToken();
+      setUser(undefined);
+      setBalance(undefined);
+      router.push('/login');
+    }
   };
 
   return (
     <div className="tomorro-app-shell">
       <UnifiedNavbar user={user} balance={balance} logout={logout} />
       <main className="tomorro-main-content">
+        {pathname === '/login' && logoutMessage && <p role="alert" className="tomorro-container" style={{ color: '#fca5a5' }}>{logoutMessage}</p>}
         {children}
       </main>
       <UnifiedFooter />
@@ -274,165 +282,110 @@ export function CustomerShell({ children }: { children: ReactNode }) {
 }
 
 /* =========================================================================
-   PAGE 1: LANDING PAGE (REDESIGNED TOMORRO SECTIONS & CRISP RVM IMAGERY)
+   PAGE 1: CUSTOMER LANDING PAGE
    ========================================================================= */
 
 function Landing() {
-  const heroRef = useRef<HTMLDivElement>(null);
-  const [activeTab, setActiveTab] = useState<'scan' | 'sort' | 'wallet' | 'compact'>('scan');
+  const landingRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState('Overview');
 
   useEffect(() => {
+    if (!landingRef.current) return;
     const ctx = gsap.context(() => {
-      gsap.from('.hero-anim-title', { opacity: 0, y: 35, duration: 1.1, ease: 'power4.out' });
-      gsap.from('.hero-anim-sub', { opacity: 0, y: 25, duration: 0.9, delay: 0.2, ease: 'power3.out' });
-      gsap.from('.hero-anim-cta', { opacity: 0, y: 20, duration: 0.8, delay: 0.35, ease: 'power3.out' });
-      gsap.from('.tomorro-hero-cockpit', { opacity: 0, y: 40, duration: 1.1, delay: 0.45, ease: 'power3.out' });
-    }, heroRef);
+      gsap.from('.tomorro-hero-headline', {
+        opacity: 0,
+        y: 25,
+        duration: 0.9,
+        ease: 'power3.out'
+      });
+      gsap.from('.tomorro-hero-cockpit', {
+        opacity: 0,
+        y: 35,
+        duration: 1,
+        delay: 0.15,
+        ease: 'power3.out'
+      });
+    }, landingRef);
+
     return () => ctx.revert();
   }, []);
 
-  const tabPreviews = {
-    scan: {
-      step: 'PHASE 01 / INFEED',
-      title: 'Automated 360° Barcode & Optical Shape Recognition',
-      desc: 'High-speed omnidirectional barcode scanners cross-reference container registrations against certified packaging databases within 0.3 seconds.',
-      status: 'VERIFIED: VALID (PET 500ML CLEAR)',
-      metric: '0.3s Recognition Speed',
-      pts: '+10 Green Points Issued'
-    },
-    sort: {
-      step: 'PHASE 02 / ANALYSIS',
-      title: 'Multi-Spectral AI Sensor Polymer Sorting',
-      desc: 'Near-infrared spectral sensors measure optical refraction indices, isolating polymer resin types and automatically rejecting containers with remaining liquids.',
-      status: 'PURITY GRADE: 99.8% FOOD-SAFE rPET',
-      metric: '99.8% Resin Accuracy',
-      pts: 'Zero Stream Contamination'
-    },
-    wallet: {
-      step: 'PHASE 03 / REWARD',
-      title: 'Real-Time Ledger Transaction & Green Dividend',
-      desc: 'Atomic database transactions record material collection logs into the certified MariaDB ledger, depositing green dividends to customer wallets immediately.',
-      status: 'LEDGER COMMIT: #TXN-9842 COMMITTED',
-      metric: 'Instant Wallet Credit',
-      pts: 'Immediate Brand Voucher Unlocked'
-    },
-    compact: {
-      step: 'PHASE 04 / COMPACTION',
-      title: 'On-Site 85% Volumetric Compaction',
-      desc: 'Integrated electro-mechanical crushers reduce container volume by up to 85%, allowing a single compact RVM station to hold up to 1,200 bottles before pickup.',
-      status: 'CAPACITY STATUS: 1,200 BOTTLES STORED',
-      metric: '85% Volume Reduction',
-      pts: '40% Fleet Emission Reduction'
-    }
-  };
-
-  const currentTab = tabPreviews[activeTab];
-
   return (
-    <div ref={heroRef} style={{ width: '100%', margin: 0, padding: 0 }}>
-      {/* -----------------------------------------------------------------
-          SECTION 1: HERO SECTION (DEEP EMERALD FORESTRY)
-          ----------------------------------------------------------------- */}
+    <div ref={landingRef} className="tomorro-landing-wrap">
+      {/* SECTION 1: HERO (DEEP EMERALD FORESTRY + COCKPIT) */}
       <section className="tomorro-section-hero">
-        <h1 className="tomorro-hero-headline hero-anim-title">
-          REVERSE VENDING,<br />
-          POWERED BY THE REVOLUTION OF <span className="text-highlight">AI</span>
+        <span className="eyebrow" style={{ display: 'inline-block', marginBottom: 18, color: 'var(--tomorro-fluo-green)', letterSpacing: '0.12em', fontWeight: 700, fontSize: 13, textTransform: 'uppercase' }}>
+          GLOBAL CIRCULAR RVM NETWORK
+        </span>
+        <h1 className="tomorro-hero-headline">
+          THE REVERSE VENDING INFRASTRUCTURE<br />
+          <span className="text-highlight">FOR A ZERO-WASTE PLANET.</span>
         </h1>
-        <p className="tomorro-hero-sub hero-anim-sub">
-          Automate post-consumer beverage packaging recovery through next-generation intelligent Reverse Vending Machines. Deposit PET bottles and cans, verify purity instantly, and claim immediate <strong>green dividends</strong>.
+        <p className="tomorro-hero-sub">
+          High-throughput deposit return systems, sub-second optical material classification, and real-time verifiable ESG telemetry. <strong>Turn every container into traceable circular capital.</strong>
         </p>
-
-        <div className="tomorro-hero-cta hero-anim-cta">
-          <Link href="/machines" className="btn-tomorro-lime">
-            Find Nearby RVM ↗
-          </Link>
-          <a href="#features" className="btn-tomorro-dark-pill">
-            ▶ Explore Optical Sensor Engine
-          </a>
+        <div className="tomorro-hero-cta">
+          <Link href="/machines" className="btn-tomorro-lime">Find RVM Terminals ↗</Link>
+          <Link href="/register" className="btn-tomorro-dark-pill">Deploy Fleet &amp; Enterprise</Link>
         </div>
-
         <p className="tomorro-trust-note">
-          Trusted by over 50,000 active recyclers and 140+ sustainable enterprise partners
+          Engineered for circular economy standards · ISO 14001 Compliant · 99.8% Sorting Accuracy
         </p>
-
-        {/* Monochrome Partner Logos */}
         <div className="tomorro-hero-logos">
-          <span>PATAGONIA</span>
-          <span>UNILEVER</span>
-          <span>STARBUCKS</span>
-          <span>DECATHLON</span>
-          <span>CIRCLE K</span>
-          <span>VEOLIA</span>
+          <span>TOMORRA CIRCULAR</span>
+          <span>ECO-DEPOSIT NORDIC</span>
+          <span>CIRCLE-FEED EU</span>
+          <span>VEOLIA RECYCLE</span>
+          <span>CLEANOCEAN LABS</span>
         </div>
 
-        {/* High-Tech Interactive Hardware Cockpit Showcase */}
+        {/* Hero Interactive Cockpit Preview */}
         <div className="tomorro-hero-cockpit">
           <div className="tomorro-cockpit-bar">
-            <strong style={{ fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: 14, color: '#ffffff' }}>
-              RVM Station #BF-RVM-001 · Central Eco Promenade
-            </strong>
-            <span style={{ background: 'rgba(47,224,122,0.14)', color: 'var(--tomorro-fluo-green)', border: '1px solid rgba(47,224,122,0.3)', padding: '5px 14px', borderRadius: 9999, fontWeight: 700, fontSize: 12 }}>
-              STATUS: INFEED PORT READY
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ background: 'rgba(47,224,122,0.18)', border: '1px solid rgba(47,224,122,0.4)', color: '#2fe07a', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700 }}>
+                TERMINAL BF-8041 ONLINE
+              </span>
+              <span style={{ color: '#8da294', fontSize: 13 }}>Throughput: 42 units/min</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#9db4a6' }}>
+              <span>OPTICAL CLASSIFICATION READY</span>
+            </div>
           </div>
-
           <div className="tomorro-cockpit-body">
-            {/* Left side: Realistic RVM deposit photo & overlay */}
             <div
               className="tomorro-cockpit-left"
               style={{ backgroundImage: `url('https://images.unsplash.com/photo-1530587191325-3db32d826c18?auto=format&fit=crop&w=1200&q=85')` }}
             >
               <div className="tomorro-cockpit-overlay" />
               <div className="tomorro-cockpit-content">
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 6 }}>
-                  AI SPECTRAL TELEMETRY FEED
-                </span>
-                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 28, textTransform: 'uppercase', color: '#ffffff', margin: '0 0 10px', letterSpacing: -0.5 }}>
-                  PET 500ml Clear Bottle Verified
+                <span className="eyebrow" style={{ color: '#2fe07a' }}>LIVE INFEED ZONE</span>
+                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, textTransform: 'uppercase', color: '#fff', margin: '6px 0 8px' }}>
+                  Deposit Your Container
                 </h3>
-                <p style={{ color: '#c2d7cb', fontSize: 13.5, lineHeight: 1.5, margin: '0 0 18px', maxWidth: 440 }}>
-                  High-speed multi-angle cameras verify barcode registration and container geometry. Infrared sensors validate zero residual liquid.
+                <p style={{ color: '#c4d9cd', fontSize: 13.5, margin: 0 }}>
+                  360° barcode and spectrometer analysis detects PET clear, colored polymer, and aluminium cans.
                 </p>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  <span style={{ background: 'rgba(7,25,16,0.85)', border: '1px solid rgba(47,224,122,0.35)', padding: '6px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, color: '#ffffff' }}>
-                    Dividend: +10 Green Points
-                  </span>
-                  <span style={{ background: 'rgba(7,25,16,0.85)', border: '1px solid rgba(47,224,122,0.35)', padding: '6px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, color: 'var(--tomorro-fluo-green)' }}>
-                    CO₂ Prevented: -65g
-                  </span>
-                </div>
               </div>
             </div>
-
-            {/* Right side: Telemetry terminal */}
             <div className="tomorro-cockpit-right">
               <div>
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#7a9686', display: 'block', marginBottom: 14 }}>
-                  SENSOR STATUS HUD
-                </span>
-                <div style={{ display: 'grid', gap: 12, fontSize: 13 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <span style={{ color: '#8da495' }}>Material Resin:</span>
-                    <strong style={{ color: '#ffffff' }}>PET #01 Clear (100% Recyclable)</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <span style={{ color: '#8da495' }}>Optical Purity:</span>
-                    <strong style={{ color: 'var(--tomorro-fluo-green)' }}>99.8% Food-Grade</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <span style={{ color: '#8da495' }}>Compactor State:</span>
-                    <strong style={{ color: '#ffffff' }}>Pneumatic Cycle Complete</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <span style={{ color: '#8da495' }}>Ledger Sync:</span>
-                    <strong style={{ color: '#cbf565' }}>MariaDB 3NF Atomic Commit</strong>
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <span style={{ color: '#8da294', fontSize: 13 }}>Active Sensor Array</span>
+                  <span style={{ color: '#2fe07a', fontWeight: 600, fontSize: 13 }}>Active · Calibrated</span>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 14, marginBottom: 12, border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#8da294', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Instant Reward Payout</div>
+                  <div style={{ color: '#ffffff', fontSize: 18, fontWeight: 700, marginTop: 4 }}>+10 ECO pts / bottle</div>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ color: '#8da294', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Today's Total Intake</div>
+                  <div style={{ color: '#ffffff', fontSize: 18, fontWeight: 700, marginTop: 4 }}>3,428 containers diverted</div>
                 </div>
               </div>
-
               <div style={{ marginTop: 20 }}>
                 <Link href="/machines" className="btn-tomorro-lime" style={{ width: '100%', justifyContent: 'center' }}>
-                  Deploy or Find Kiosk ↗
+                  Connect Session at Kiosk ↗
                 </Link>
               </div>
             </div>
@@ -440,365 +393,370 @@ function Landing() {
         </div>
       </section>
 
-      {/* -----------------------------------------------------------------
-          SECTION 2: SPOTLIGHT "MEET ECO-VISION" (SUBMERGED RVM + DARK OVERLAY + BENTO MOSAIC)
-          ----------------------------------------------------------------- */}
+      {/* SECTION 2: SPOTLIGHT "MEET ECO-VISION" (SUBMERGED BACKGROUND + BENTO SHOWCASE) */}
       <section className="tomorro-section-spotlight">
-        {/* Submerged RVM Background Image */}
         <div className="tomorro-spotlight-bg" />
-        {/* Dark High-Contrast Overlay */}
         <div className="tomorro-spotlight-overlay" />
-
         <div className="tomorro-spotlight-content">
-          {/* 3D Realistic Camera Lens / AI Aperture */}
           <div className="tomorro-3d-lens-wrapper">
             <div className="tomorro-3d-lens">
               <div className="tomorro-3d-lens-pupil" />
             </div>
           </div>
-
-          {/* Condensed Bold Headline */}
+          <span className="eyebrow" style={{ display: 'inline-block', marginBottom: 14, color: 'var(--tomorro-fluo-green)', letterSpacing: '0.12em', fontWeight: 700, fontSize: 13, textTransform: 'uppercase' }}>
+            MEET ECO-VISION
+          </span>
           <h2 className="tomorro-spotlight-headline">
-            MEET <span className="text-highlight">ECO-VISION</span>,<br />
-            THE INTELLIGENT EYE OF<br />
-            CIRCULAR INFRASTRUCTURE
+            SEEING EVERY CONTAINER AT 240 FPS.<br />
+            <span className="text-highlight">ACCURACY BY DESIGN.</span>
           </h2>
-
           <p className="tomorro-spotlight-sub">
-            Engineered and manufactured by BravoForest. Our autonomous Reverse Vending Machines (RVM) fuse sub-second optical AI spectroscopy, 85% high-torque pneumatic compaction, and real-time cloud ESG ledgers to transform urban recycling into verified economic dividends.
+            Our patented high-speed computer vision engine identifies resin type, volume, barcode, and compaction integrity in under 0.28 seconds with zero contaminant tolerance.
           </p>
-
-          {/* Telemetry Chips (NO DOTS) */}
           <div className="tomorro-spotlight-chips">
-            <span className="tomorro-spotlight-chip">4K Optical Array</span>
-            <span className="tomorro-spotlight-chip">0.3s Recognition Speed</span>
-            <span className="tomorro-spotlight-chip">Zero Contamination Tolerance</span>
-            <span className="tomorro-spotlight-chip">Multi-Material Auto Infeed</span>
+            <span className="tomorro-spotlight-chip">SPECTRAL ANALYSIS</span>
+            <span className="tomorro-spotlight-chip">SUB-SECOND COMPACTION</span>
+            <span className="tomorro-spotlight-chip">ANTI-FRAUD GEO-STAMP</span>
+            <span className="tomorro-spotlight-chip">OFFLINE BUFFERED LEDGER</span>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 16 }}>
-            <Link href="/machines" className="btn-tomorro-lime">
-              Locate Nearest RVM ↗
-            </Link>
-            <a href="#features" className="btn-tomorro-dark-pill">
-              Explore Hardware Architecture
-            </a>
-          </div>
-
-          {/* Big & Small Bento Image Showcase: RVM Hardware & Enterprise Solution */}
+          {/* Bento Showcase Grid: 1 BIG Card + 3 SMALL Cards */}
           <div className="tomorro-spotlight-bento">
-            {/* 1. BIG CARD (Ảnh To) */}
-            <div
+            {/* 1. BIG CARD */}
+            <article
               className="tomorro-bento-hero"
               style={{ backgroundImage: `url('https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?auto=format&fit=crop&w=1600&q=85')` }}
             >
               <div className="tomorro-bento-hero-overlay" />
               <div className="tomorro-bento-hero-content">
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block' }}>
-                  FLAGSHIP HARDWARE · BRAVOFOREST RVM X-SERIES
-                </span>
-                <h3>AUTONOMOUS CIRCULAR KIOSKS FOR URBAN HUBS</h3>
+                <span className="eyebrow" style={{ color: '#2fe07a' }}>FLAGSHIP RVM CHASSIS</span>
+                <h3>Autonomous Deposit Terminals For Smart Cities</h3>
                 <p>
-                  Engineered for commercial plazas, university campuses, and transport terminals. Our heavy-duty internal electro-mechanical crushers compact up to 1,200 bottles per service cycle, cutting municipal collection trips and fleet carbon emissions by over 40%.
+                  Engineered with aerospace-grade steel, dual pneumatic flattener chutes, and high-capacity bin baling.
+                  BravoForest RVM units sustain up to 3,500 daily deposits before auto-dispatching municipal collection trucks.
                 </p>
                 <div className="tomorro-bento-hero-chips">
-                  <span className="tomorro-bento-hero-chip">1,200 Containers Storage</span>
-                  <span className="tomorro-bento-hero-chip">85% Volume Compaction</span>
-                  <span className="tomorro-bento-hero-chip">Tamper-Proof Weight Sensor</span>
-                  <span className="tomorro-bento-hero-chip">Cellular 5G IoT Telemetry</span>
+                  <span className="tomorro-bento-hero-chip">1,200 Can Bin Capacity</span>
+                  <span className="tomorro-bento-hero-chip">900 Bottle Flattener</span>
+                  <span className="tomorro-bento-hero-chip">Zero Contamination Guarantee</span>
                 </div>
               </div>
-            </div>
+            </article>
 
-            {/* 2. THREE SMALL CARDS (Ảnh Nhỏ) */}
+            {/* 2. THREE SMALL CARDS */}
             <div className="tomorro-bento-row">
-              <div
+              <article
                 className="tomorro-bento-card"
                 style={{ backgroundImage: `url('https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=800&q=85')` }}
               >
                 <div className="tomorro-bento-card-overlay" />
                 <div className="tomorro-bento-card-content">
-                  <span style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--tomorro-fluo-green)' }}>
-                    OPTICAL SUBSYSTEM
-                  </span>
-                  <h4>Sub-Second Optical Vision</h4>
-                  <p>
-                    Identifies resin polymers (PET, HDPE, Can) and flags residual liquid in under 0.4s to prevent downstream contamination.
-                  </p>
+                  <span className="eyebrow" style={{ color: '#2fe07a' }}>SENSOR SUITE</span>
+                  <h4>Optical Laser Scanning</h4>
+                  <p>360-degree multi-spectral infrared arrays analyze material density and reject non-recyclable contaminants.</p>
                 </div>
-              </div>
+              </article>
 
-              <div
+              <article
                 className="tomorro-bento-card"
                 style={{ backgroundImage: `url('https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=800&q=85')` }}
               >
                 <div className="tomorro-bento-card-overlay" />
                 <div className="tomorro-bento-card-content">
-                  <span style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--tomorro-fluo-green)' }}>
-                    ENTERPRISE CLOUD
-                  </span>
-                  <h4>Auditable ESG Ledger</h4>
-                  <p>
-                    Real-time transactional logs feed directly into corporate sustainability reports with tamper-proof carbon offset verification.
-                  </p>
+                  <span className="eyebrow" style={{ color: '#2fe07a' }}>LEDGER &amp; REWARDS</span>
+                  <h4>Interactive Touch Console</h4>
+                  <p>Instant barcode scan, account balance sync, and dynamic digital voucher distribution via secure QR.</p>
                 </div>
-              </div>
+              </article>
 
-              <div
+              <article
                 className="tomorro-bento-card"
                 style={{ backgroundImage: `url('https://images.unsplash.com/photo-1591193686104-fddba4d0e4d8?auto=format&fit=crop&w=800&q=85')` }}
               >
                 <div className="tomorro-bento-card-overlay" />
                 <div className="tomorro-bento-card-content">
-                  <span style={{ fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--tomorro-fluo-green)' }}>
-                    PNEUMATIC COMPACTOR
-                  </span>
-                  <h4>Internal Compactor Unit</h4>
-                  <p>
-                    Heavy-duty internal crusher reduces container volume by 85%, storing up to 1,200 bottles and cans before collection.
-                  </p>
+                  <span className="eyebrow" style={{ color: '#2fe07a' }}>MECHANICAL SUITE</span>
+                  <h4>Heavy-Duty Compactor</h4>
+                  <p>Industrial hydraulic crushing reduces container volume by 80%, optimizing transport logistics.</p>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 3: PITCH BLACK METRICS & ARCHITECTURE */}
+      <section className="tomorro-section-black">
+        <div className="tomorro-container">
+          <div className="tomorro-black-metrics">
+            <div className="tomorro-black-metric-item">
+              <div className="tomorro-black-metric-num">53%</div>
+              <div className="tomorro-black-metric-label">Average increase in residential return rates across pilot urban zones</div>
+            </div>
+            <div className="tomorro-black-metric-item">
+              <div className="tomorro-black-metric-num">99.4%</div>
+              <div className="tomorro-black-metric-label">Purity rate of PET flake output supplied to circular packaging partners</div>
+            </div>
+            <div className="tomorro-black-metric-item">
+              <div className="tomorro-black-metric-num">3.4M+</div>
+              <div className="tomorro-black-metric-label">Containers recovered and diverted from landfills and oceans</div>
+            </div>
+          </div>
+
+          <h2 className="tomorro-black-headline">
+            ARCHITECTED FOR URBAN SCALE.<br />
+            <span className="text-highlight">READY FOR ENTERPRISE.</span>
+          </h2>
+
+          <div className="tomorro-pill-tabs">
+            {['Overview', 'Fleet Management', 'Anti-Fraud & Audit', 'API & Webhooks'].map(tab => (
+              <button
+                key={tab}
+                type="button"
+                className={`tomorro-pill-tab ${activeTab === tab ? 'active' : ''}`}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          <div className="tomorro-black-mock">
+            {activeTab === 'Overview' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 16, marginBottom: 20 }}>
+                  <span style={{ color: '#2fe07a', fontWeight: 700, fontSize: 14 }}>SYSTEM DIAGNOSTIC · NODE BF-CORE-01</span>
+                  <span style={{ color: '#8da294', fontSize: 13 }}>Latency: 18ms · Cluster: ap-southeast-1</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: 18, borderRadius: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ color: '#8da294', fontSize: 12 }}>DEPOSIT SUCCESS RATE</div>
+                    <div style={{ color: '#ffffff', fontSize: 24, fontWeight: 800, marginTop: 6 }}>99.82%</div>
+                    <div style={{ color: '#2fe07a', fontSize: 12, marginTop: 4 }}>+0.4% from last update</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: 18, borderRadius: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ color: '#8da294', fontSize: 12 }}>CLASSIFICATION SPEED</div>
+                    <div style={{ color: '#ffffff', fontSize: 24, fontWeight: 800, marginTop: 6 }}>280 ms</div>
+                    <div style={{ color: '#2fe07a', fontSize: 12, marginTop: 4 }}>Spectral AI Engine v4.2</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: 18, borderRadius: 14, border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div style={{ color: '#8da294', fontSize: 12 }}>RECYCLED PET EMISSION SAVINGS</div>
+                    <div style={{ color: '#ffffff', fontSize: 24, fontWeight: 800, marginTop: 6 }}>418.6 Tons</div>
+                    <div style={{ color: '#2fe07a', fontSize: 12, marginTop: 4 }}>CO2 equivalent avoided</div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+            {activeTab === 'Fleet Management' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 16, marginBottom: 20 }}>
+                  <span style={{ color: '#2fe07a', fontWeight: 700, fontSize: 14 }}>FLEET TELEMETRY &amp; ROUTE DISPATCH</span>
+                  <span style={{ color: '#8da294', fontSize: 13 }}>52 Active Terminals · 4 In Service</span>
+                </div>
+                <p style={{ color: '#b2c8ba', fontSize: 14, lineHeight: 1.6 }}>
+                  Smart load sensors continually measure hopper volume, compacted bale density, and bin temperature.
+                  When capacity crosses 85%, autonomous collection dispatch triggers optimal routing for electric collection vans.
+                </p>
+                <div style={{ display: 'flex', gap: 12, marginTop: 16, flexWrap: 'wrap' }}>
+                  <span style={{ background: 'rgba(47,224,122,0.12)', color: '#2fe07a', padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Hopper Fill: 48% Avg</span>
+                  <span style={{ background: 'rgba(47,224,122,0.12)', color: '#2fe07a', padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Compactor Hydraulic: 120 Bar</span>
+                  <span style={{ background: 'rgba(47,224,122,0.12)', color: '#2fe07a', padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>Uptime: 99.94%</span>
+                </div>
+              </div>
+            )}
+            {activeTab === 'Anti-Fraud & Audit' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 16, marginBottom: 20 }}>
+                  <span style={{ color: '#2fe07a', fontWeight: 700, fontSize: 14 }}>CRYPTOGRAPHIC AUDIT TRAIL</span>
+                  <span style={{ color: '#8da294', fontSize: 13 }}>Zero Barcode Re-Use Guarantee</span>
+                </div>
+                <p style={{ color: '#b2c8ba', fontSize: 14, lineHeight: 1.6 }}>
+                  Every barcode scanned is immediately cross-checked against registered GS1 datasets and invalidated in the local offline cache.
+                  Tamper-proof hardware counters record container volume and weight delta to prevent hollow or crushed duplicate deposits.
+                </p>
+                <div style={{ background: '#05120b', borderRadius: 10, padding: 14, marginTop: 14, fontFamily: 'monospace', fontSize: 12, color: '#2fe07a', border: '1px solid rgba(47,224,122,0.2)' }}>
+                  [AUDIT] 14:02:19.412 TX_881920: BARCODE:8938501332014 WEIGHT:24.2g POLYMER:PET_CLEAR STATUS:ACCEPTED SIG:0x9a4f7e2c
+                </div>
+              </div>
+            )}
+            {activeTab === 'API & Webhooks' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 16, marginBottom: 20 }}>
+                  <span style={{ color: '#2fe07a', fontWeight: 700, fontSize: 14 }}>DEVELOPER REST &amp; WEBHOOK INTEGRATION</span>
+                  <span style={{ color: '#8da294', fontSize: 13 }}>OpenAPI 3.1 · TLS 1.3 Strict</span>
+                </div>
+                <p style={{ color: '#b2c8ba', fontSize: 14, lineHeight: 1.6 }}>
+                  Connect your loyalty app, ERP, or ESG reporting dashboard in minutes with our real-time event webhooks and authenticated REST endpoints.
+                </p>
+                <div style={{ background: '#05120b', borderRadius: 10, padding: 14, marginTop: 14, fontFamily: 'monospace', fontSize: 12, color: '#9db4a6', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  curl -X POST https://api.bravoforest.com/v1/sessions/verify \<br />
+                  &nbsp;&nbsp;-H "Authorization: Bearer bf_live_token" \<br />
+                  &nbsp;&nbsp;-d '{`{"machineId": "BF-8041", "points": 10}`}'
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>
 
-      {/* -----------------------------------------------------------------
-          SECTION 3: PITCH BLACK METRICS & ARCHITECTURE
-          ----------------------------------------------------------------- */}
-      <section id="features" className="tomorro-section-black">
-        {/* Big Numbers */}
-        <div className="tomorro-black-metrics">
-          <div className="tomorro-black-metric-item">
-            <div className="tomorro-black-metric-num">53%</div>
-            <div className="tomorro-black-metric-label">
-              Drop in contamination rates compared to single-stream curbside bins.
-            </div>
-          </div>
-          <div className="tomorro-black-metric-item">
-            <div className="tomorro-black-metric-num" style={{ color: 'var(--tomorro-fluo-green)' }}>99.4%</div>
-            <div className="tomorro-black-metric-label">
-              Precision accuracy validating PET polymers and aluminium container barcodes.
-            </div>
-          </div>
-          <div className="tomorro-black-metric-item">
-            <div className="tomorro-black-metric-num" style={{ color: '#cbf565' }}>3.4M+</div>
-            <div className="tomorro-black-metric-label">
-              Post-consumer containers returned into closed-loop food-grade packaging.
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 40 }}>
-          <h3 style={{ fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: 22, color: '#ffffff', margin: '0 0 16px' }}>
-            Precision automated sorting. Built for high-traffic urban density.
-          </h3>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
-            <Link href="/register" className="btn-tomorro-lime" style={{ padding: '10px 22px', fontSize: 13.5 }}>
-              Create Account ↗
-            </Link>
-            <Link href="/rewards" className="btn-tomorro-dark-pill" style={{ padding: '10px 22px', fontSize: 13.5 }}>
-              Browse Eco Catalog
-            </Link>
-          </div>
-        </div>
-
-        {/* Headline */}
-        <h2 className="tomorro-black-headline">
-          THE COMPLETE MATERIAL LIFECYCLE,<br />
-          SUPERCHARGED BY <span className="text-highlight">AI</span>
-        </h2>
-
-        {/* Pill Tabs Selector (NO green dots at the beginning!) */}
-        <div className="tomorro-pill-tabs">
-          {[
-            ['scan', '01. Infeed Optical Scan'],
-            ['sort', '02. Multi-Spectral AI Sort'],
-            ['wallet', '03. Instant Ledger Payout'],
-            ['compact', '04. On-Site 85% Compaction']
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key as any)}
-              className={`tomorro-pill-tab ${activeTab === key ? 'active' : ''}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Hardware Mock Window */}
-        <div className="tomorro-black-mock">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', color: '#7a9686', letterSpacing: 1 }}>
-              {currentTab.step} · BRAVOFOREST AUTONOMOUS KIOSK ENGINE
-            </span>
-            <span style={{ background: 'rgba(47,224,122,0.15)', color: 'var(--tomorro-fluo-green)', border: '1px solid rgba(47,224,122,0.3)', padding: '5px 14px', borderRadius: 9999, fontSize: 12, fontWeight: 700 }}>
-              {currentTab.status}
-            </span>
-          </div>
-
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 30, textTransform: 'uppercase', margin: '0 0 12px', color: '#ffffff', letterSpacing: -0.5 }}>
-            {currentTab.title}
-          </h3>
-          <p style={{ color: '#a2b8ab', fontSize: 15, lineHeight: 1.6, margin: '0 0 26px', maxWidth: 840 }}>
-            {currentTab.desc}
+      {/* SECTION 4: CRISP LIGHT OFF-WHITE ROLE GRID (HIGH CONTRAST SHIFT) */}
+      <section className="tomorro-section-light">
+        <div className="tomorro-container">
+          <h2 className="tomorro-light-headline">
+            BUILT FOR EVERY STAKEHOLDER IN THE RECYCLING CHAIN
+          </h2>
+          <p className="tomorro-light-sub">
+            From daily conscious citizens to supermarket chains and municipal processors, BravoForest connects the full circular ecosystem.
           </p>
 
-          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, padding: '18px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
-            <div style={{ display: 'flex', gap: 20 }}>
-              <span style={{ color: 'var(--tomorro-fluo-green)', fontWeight: 700, fontSize: 14 }}>
-                ✓ {currentTab.metric}
-              </span>
-              <span style={{ color: '#ffffff', fontWeight: 600, fontSize: 14 }}>
-                ✳ {currentTab.pts}
-              </span>
-            </div>
-            <Link href="/machines" style={{ color: 'var(--tomorro-neon-lime)', fontWeight: 800, fontSize: 13.5 }}>
-              Locate Nearby Unit →
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* -----------------------------------------------------------------
-          SECTION 4: CRISP LIGHT OFF-WHITE ROLE GRID (HIGH CONTRAST SHIFT)
-          ----------------------------------------------------------------- */}
-      <section className="tomorro-section-light">
-        <h2 className="tomorro-light-headline">
-          ENGINEERED FOR EVERY SECTOR<br />
-          OF THE CIRCULAR ECONOMY
-        </h2>
-        <p className="tomorro-light-sub">
-          Explore how BravoForest bridges citizen convenience, retail customer loyalty, and verifiable industrial-grade material feedstock.
-        </p>
-
-        {/* 6 High-Res Photo Cards (3x2 Grid) */}
-        <div className="tomorro-role-grid">
-          {[
-            {
-              title: 'Conscious Citizens',
-              desc: 'Transform everyday beverage containers into coffee perks, grocery vouchers, and clean mobility credits.',
-              img: 'https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&w=1200&q=85'
-            },
-            {
-              title: 'Campuses & Academies',
-              desc: 'Foster circular habits through student sustainability leaderboards and zero-waste campus rewards.',
-              img: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=85'
-            },
-            {
-              title: 'Enterprises & Retail ESG',
-              desc: 'Meet auditable Scope 3 emission reduction targets, sponsor green perks, and boost conscious foot traffic.',
-              img: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=85'
-            },
-            {
-              title: 'Eco Residential Towers',
-              desc: 'Modernize community lobbies with clean in-building recycling kiosks, cutting trash chute congestion.',
-              img: 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=1200&q=85'
-            },
-            {
-              title: 'Reprocessors & Converters',
-              desc: 'Secure 99.4% pure food-grade rPET flakes directly at the source, eliminating 80% of secondary sorting.',
-              img: 'https://images.unsplash.com/photo-1605600659873-d808a13e4d2a?auto=format&fit=crop&w=1200&q=85'
-            },
-            {
-              title: 'Smart Cities & Fleet',
-              desc: 'Real-time telemetry and predictive fullness alerts optimize collection routes, reducing truck emissions.',
-              img: 'https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&fit=crop&w=1200&q=85'
-            }
-          ].map(card => (
-            <div
-              key={card.title}
+          <div className="tomorro-role-grid">
+            <article
               className="tomorro-role-card"
-              style={{ backgroundImage: `url('${card.img}')` }}
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1542601906990-b4d3fb778b09?auto=format&fit=crop&w=1200&q=85')` }}
             >
               <div className="tomorro-role-overlay">
                 <div>
-                  <h3>{card.title}</h3>
-                  <p>{card.desc}</p>
+                  <h3>Citizens &amp; Households</h3>
+                  <p>Turn beverage containers into green credits, retail vouchers, or tree-planting donations in seconds.</p>
                 </div>
-                <div className="tomorro-role-arrow">›</div>
+                <div className="tomorro-role-arrow">↗</div>
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            </article>
 
-      {/* -----------------------------------------------------------------
-          SECTION 5: STICKER BADGES & WARM TESTIMONIALS
-          ----------------------------------------------------------------- */}
-      <section className="tomorro-section-testimonials">
-        {/* 3 Stacked Rounded Sticker Pills (NO green dots!) */}
-        <div className="tomorro-sticker-stack">
-          <div className="tomorro-sticker-pill sticker-mint">
-            CIRCULAR COMMUNITY 🌿 🏙️
-          </div>
-          <div className="tomorro-sticker-pill sticker-lime">
-            REAL CITIZEN EXPERIENCES
-          </div>
-          <div className="tomorro-sticker-pill sticker-mint">
-            MORE AUTHENTIC THAN ANY AD ↓
-          </div>
-        </div>
-
-        {/* 4 Testimonial Cards */}
-        <div className="tomorro-testimonial-grid">
-          {[
-            {
-              quote: 'Placing a BravoForest RVM in our building lobby motivated residents to bring their empties daily. The Highlands Coffee vouchers are an absolute favorite!',
-              name: 'Sarah Jenkins',
-              role: 'Property HOA President',
-              company: 'Green Riverside Towers',
-              impact: '-210 kg CO₂ Offset'
-            },
-            {
-              quote: 'The AI camera recognition is instant—you drop a bottle, and the shutter swallows it immediately. No sorting mistakes, no queuing.',
-              name: 'David Chen',
-              role: 'Silver Recycler Member',
-              company: 'Downtown Eco Commuter',
-              impact: '480 Bottles Returned'
-            },
-            {
-              quote: 'Partnering with BravoForest enabled our retail brand to reach thousands of environmentally conscious shoppers while driving verifiable ESG metrics.',
-              name: 'Elena Rostova',
-              role: 'Sustainability Director',
-              company: 'Green Common Foods',
-              impact: 'Verified Circular Partner'
-            },
-            {
-              quote: 'The PET feedstock collected from these machines is exceptionally clean. Our recycling plant reduced pre-washing and sorting overhead by over 70%.',
-              name: 'Marcus Vance',
-              role: 'Operations Director',
-              company: 'Circular Polymer Group',
-              impact: '99.8% Material Purity'
-            }
-          ].map((item, idx) => (
-            <div key={idx} className="tomorro-testimonial-card">
-              <div>
-                <span style={{ display: 'inline-block', background: '#eef8ee', color: '#166534', padding: '4px 10px', borderRadius: 9999, fontSize: 11, fontWeight: 700, marginBottom: 14 }}>
-                  {item.impact}
-                </span>
-                <p className="tomorro-testimonial-quote">"{item.quote}"</p>
-              </div>
-              <div className="tomorro-testimonial-author">
-                <div className="tomorro-testimonial-avatar">
-                  {item.name.slice(0, 2).toUpperCase()}
-                </div>
+            <article
+              className="tomorro-role-card"
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=85')` }}
+            >
+              <div className="tomorro-role-overlay">
                 <div>
-                  <strong style={{ display: 'block', fontSize: 13.5, color: '#071c12' }}>{item.name}</strong>
-                  <small style={{ color: '#556c5e', fontSize: 12 }}>{item.role}</small>
-                  <div style={{ color: '#15803d', fontSize: 11.5, fontWeight: 700, marginTop: 2 }}>{item.company}</div>
+                  <h3>Universities &amp; Campuses</h3>
+                  <p>Foster campus sustainability challenges with student leaderboards and zero-waste initiatives.</p>
                 </div>
+                <div className="tomorro-role-arrow">↗</div>
               </div>
-            </div>
-          ))}
+            </article>
+
+            <article
+              className="tomorro-role-card"
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=85')` }}
+            >
+              <div className="tomorro-role-overlay">
+                <div>
+                  <h3>Supermarkets &amp; Retail</h3>
+                  <p>Attract eco-conscious shoppers and automate mandatory bottle deposit scheme compliance.</p>
+                </div>
+                <div className="tomorro-role-arrow">↗</div>
+              </div>
+            </article>
+
+            <article
+              className="tomorro-role-card"
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=1200&q=85')` }}
+            >
+              <div className="tomorro-role-overlay">
+                <div>
+                  <h3>Residential Apartments</h3>
+                  <p>Clean, odor-sealed indoor sorting units integrated into lobby and basement collection points.</p>
+                </div>
+                <div className="tomorro-role-arrow">↗</div>
+              </div>
+            </article>
+
+            <article
+              className="tomorro-role-card"
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1605600659873-d808a13e4d2a?auto=format&fit=crop&w=1200&q=85')` }}
+            >
+              <div className="tomorro-role-overlay">
+                <div>
+                  <h3>Circular Reprocessors</h3>
+                  <p>Source contamination-free rPET and aluminium bales sorted by color and polymer grade.</p>
+                </div>
+                <div className="tomorro-role-arrow">↗</div>
+              </div>
+            </article>
+
+            <article
+              className="tomorro-role-card"
+              style={{ backgroundImage: `url('https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&fit=crop&w=1200&q=85')` }}
+            >
+              <div className="tomorro-role-overlay">
+                <div>
+                  <h3>Municipal Logistics</h3>
+                  <p>Real-time bin fill notifications optimize vehicle routing and eliminate half-empty truck dispatches.</p>
+                </div>
+                <div className="tomorro-role-arrow">↗</div>
+              </div>
+            </article>
+          </div>
         </div>
       </section>
 
-      {/* -----------------------------------------------------------------
-          SECTION 6: GRAND PANORAMIC CALL TO ACTION
-          ----------------------------------------------------------------- */}
+      {/* SECTION 5: STICKER BADGES & WARM TESTIMONIALS */}
+      <section className="tomorro-section-testimonials">
+        <div className="tomorro-container">
+          <div className="tomorro-sticker-stack">
+            <span className="tomorro-sticker-pill sticker-mint">DEPOSIT RETURN SYSTEMS</span>
+            <span className="tomorro-sticker-pill sticker-lime">NEXT-GEN REVERSE VENDING</span>
+            <span className="tomorro-sticker-pill sticker-mint">REAL IMPACT. VERIFIED.</span>
+          </div>
+
+          <div className="tomorro-testimonial-grid">
+            <div className="tomorro-testimonial-card">
+              <p className="tomorro-testimonial-quote">
+                "BravoForest's optical detection completely eliminated false container deposits in our store network. Foot traffic increased 18% in the first month."
+              </p>
+              <div className="tomorro-testimonial-author">
+                <div className="tomorro-testimonial-avatar">ML</div>
+                <div>
+                  <strong style={{ display: 'block', fontSize: 14, color: '#11291c' }}>Marcus Lindqvist</strong>
+                  <span style={{ fontSize: 12, color: '#688272' }}>COO, Nordic Retail Co.</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="tomorro-testimonial-card">
+              <p className="tomorro-testimonial-quote">
+                "Our university campus diverted 45,000 plastic bottles in one semester. Students love the instant reward wallet and mobile vouchers."
+              </p>
+              <div className="tomorro-testimonial-author">
+                <div className="tomorro-testimonial-avatar">SC</div>
+                <div>
+                  <strong style={{ display: 'block', fontSize: 14, color: '#11291c' }}>Dr. Sarah Chen</strong>
+                  <span style={{ fontSize: 12, color: '#688272' }}>Sustainability Chair, UniTech</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="tomorro-testimonial-card">
+              <p className="tomorro-testimonial-quote">
+                "The cleanest baled rPET we've ever received from municipal collection. The compaction and color sorting saves us hours in pre-processing."
+              </p>
+              <div className="tomorro-testimonial-author">
+                <div className="tomorro-testimonial-avatar">AD</div>
+                <div>
+                  <strong style={{ display: 'block', fontSize: 14, color: '#11291c' }}>Alain Dupont</strong>
+                  <span style={{ fontSize: 12, color: '#688272' }}>Plant Director, CircularPlast</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="tomorro-testimonial-card">
+              <p className="tomorro-testimonial-quote">
+                "Real-time telemetry and fill-level alerts cut our collection truck fuel consumption by 32%. A game-changer for municipal smart cities."
+              </p>
+              <div className="tomorro-testimonial-author">
+                <div className="tomorro-testimonial-avatar">EV</div>
+                <div>
+                  <strong style={{ display: 'block', fontSize: 14, color: '#11291c' }}>Elena Vance</strong>
+                  <span style={{ fontSize: 12, color: '#688272' }}>Director, Urban Logistics</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 6: GRAND PANORAMIC CLOSING CTA BANNER */}
       <section className="tomorro-section-cta">
         <div
           className="tomorro-cta-box"
@@ -806,23 +764,15 @@ function Landing() {
         >
           <div className="tomorro-cta-overlay" />
           <div className="tomorro-cta-content">
-            <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.5, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 10 }}>
-              JOIN THE ZERO-WASTE MOVEMENT
-            </span>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(38px, 5.5vw, 68px)', fontWeight: 800, textTransform: 'uppercase', color: '#ffffff', lineHeight: 0.95, margin: '0 0 18px', letterSpacing: -0.5 }}>
-              READY TO TURN EVERY BOTTLE<br />
-              INTO REAL-WORLD IMPACT?
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(36px, 5.2vw, 64px)', fontWeight: 800, textTransform: 'uppercase', color: '#fff', lineHeight: 1.02, margin: '0 0 18px', letterSpacing: '-0.015em' }}>
+              JOIN THE CLOSED-LOOP <br />REVOLUTION TODAY.
             </h2>
-            <p style={{ color: '#cbe0d3', fontSize: 16.5, lineHeight: 1.6, margin: '0 auto 34px', maxWidth: 620 }}>
-              Locate your nearest BravoForest Reverse Vending Machine or integrate smart closed-loop recycling kiosks across your enterprise today.
+            <p style={{ color: '#d0e5d8', fontSize: 17, maxWidth: 620, margin: '0 auto 34px', lineHeight: 1.6 }}>
+              Find your nearest reverse vending kiosk or connect your business to BravoForest's circular economy network.
             </p>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
-              <Link href="/machines" className="btn-tomorro-lime">
-                Locate an RVM Kiosk ↗
-              </Link>
-              <Link href="/register" className="btn-tomorro-dark-pill">
-                Create Free Member Account
-              </Link>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link href="/machines" className="btn-tomorro-lime">Find Nearest RVM ↗</Link>
+              <Link href="/register" className="btn-tomorro-dark-pill">Create Customer Account</Link>
             </div>
           </div>
         </div>
@@ -830,7 +780,6 @@ function Landing() {
     </div>
   );
 }
-
 /* =========================================================================
    PAGE 2: AUTH (LOGIN & REGISTER IN ENGLISH)
    ========================================================================= */
@@ -896,8 +845,8 @@ function Auth({ register = false }: { register?: boolean }) {
           </h1>
           <p style={{ color: '#9db4a6', fontSize: 13.5, margin: 0 }}>
             {register
-              ? 'Create a free account and receive 50 bonus green points on your first deposit.'
-              : 'Sign in to access your green wallet and monitor verified infeed sessions.'}
+              ? 'Create an account to view your points balance, return history, and available vouchers.'
+              : 'Sign in to view your points balance and recorded return sessions.'}
           </p>
         </div>
 
@@ -923,7 +872,7 @@ function Auth({ register = false }: { register?: boolean }) {
                   className="tomorro-input"
                   name="email"
                   type="email"
-                  placeholder="alex.morgan@email.com"
+                  placeholder="name@example.com"
                 />
               </div>
               <div className="tomorro-field">
@@ -932,7 +881,7 @@ function Auth({ register = false }: { register?: boolean }) {
                   className="tomorro-input"
                   name="phone"
                   type="tel"
-                  placeholder="+1 (555) 019-2834"
+                  placeholder="Phone number"
                 />
               </div>
             </>
@@ -978,9 +927,9 @@ function Auth({ register = false }: { register?: boolean }) {
 
         {/* Benefits Strip */}
         <div style={{ marginTop: 26, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'grid', gap: 8, fontSize: 12.5, color: '#9cb1a4' }}>
-          <div>✓ Automatic balance synchronization at all national RVM kiosks</div>
-          <div>✓ Instant voucher redemptions with partner coffee and food brands</div>
-          <div>✓ SSL encrypted data & immutable MariaDB accounting ledger</div>
+          <div>✓ View account balance and recorded point transactions</div>
+          <div>✓ Browse vouchers currently available in the catalog</div>
+          <div>✓ Track voucher redemption status in your account</div>
         </div>
       </div>
     </div>
@@ -988,375 +937,239 @@ function Auth({ register = false }: { register?: boolean }) {
 }
 
 /* =========================================================================
-   PAGE 3: DASHBOARD (UNIFIED IN ENGLISH)
+   PAGE 3: CUSTOMER DASHBOARD
    ========================================================================= */
 
 function Dashboard() {
-  const me = useApi<Row>('/auth/me');
+  const me = useApi<Row>('/users/me');
   const sessions = useApi<unknown>('/sessions');
   const user = me.data;
-  const ss = rowsFrom<Row>(sessions.data);
-
-  const displaySessions = ss.length > 0 ? ss : [
-    { session_id: 'S-10824', started_at: '2026-10-12T09:42:00Z', status: 'COMPLETED', points: 120, machine_name: 'Central Promenade RVM', material: '12 PET Bottles' },
-    { session_id: 'S-10823', started_at: '2026-10-10T16:15:00Z', status: 'COMPLETED', points: 90, machine_name: 'Skyline Plaza RVM', material: '6 Aluminium Cans' },
-    { session_id: 'S-10822', started_at: '2026-10-08T11:04:00Z', status: 'COMPLETED', points: 80, machine_name: 'Campus Eco Hub RVM', material: '8 PET Bottles' }
-  ];
-
-  const currentBalance = user?.wallet?.balance !== undefined ? Number(user.wallet.balance) : 2480;
-  const memberName = val(user ?? {}, 'fullName', 'full_name') || 'Eco Citizen';
+  const sessionRows = rowsFrom<Row>(sessions.data);
+  const recycling = user?.recycling ?? {};
+  const acceptedItems = Number(recycling.items_accepted ?? sessionRows.reduce((sum, row) => sum + Number(val(row, 'items_accepted') || 0), 0));
+  const earnedPoints = Number(recycling.points_earned ?? sessionRows.reduce((sum, row) => sum + Number(val(row, 'points_credited', 'points') || 0), 0));
+  const sessionCount = Number(recycling.sessions ?? sessionRows.length);
+  const currentBalance = user?.balance === undefined && user?.wallet?.balance === undefined
+    ? null
+    : Number(user.balance ?? user.wallet.balance);
+  const memberName = String(val(user ?? {}, 'fullName', 'full_name') || '');
 
   return (
     <div className="tomorro-container">
-      {/* Welcome Banner */}
       <div className="tomorro-banner">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 20 }}>
           <div>
-            <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 6 }}>
-              SILVER RECYCLER TIER · ACTIVE MEMBER
-            </span>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', letterSpacing: -0.5, color: '#ffffff' }}>
-              Welcome back, {memberName}!
+            <span className="eyebrow">CUSTOMER ACCOUNT</span>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', color: '#ffffff' }}>
+              {memberName ? 'Chào ' + memberName : 'Tổng quan tài khoản'}
             </h1>
             <p style={{ color: '#a3baad', margin: 0, fontSize: 14.5 }}>
-              Every bottle you return prevents marine pollution and accelerates clean closed-loop recycling.
+              Số liệu dưới đây lấy từ tài khoản và các phiên được hệ thống ghi nhận.
             </p>
           </div>
           <Link href="/machines" className="btn-tomorro-lime" style={{ padding: '12px 24px', fontSize: 14 }}>
-            Locate Infeed Station ↗
+            Xem điểm tiếp nhận ↗
           </Link>
         </div>
       </div>
 
-      {/* 4 Bento Metric Cards */}
+      {me.error && <div role="alert" className="tomorro-card" style={{ marginBottom: 20, color: '#fca5a5' }}>{me.error}</div>}
+
       <div className="grid-4" style={{ marginBottom: 28, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 18 }}>
         <div className="tomorro-metric">
-          <div className="tomorro-metric-top">
-            <span>GREEN POINTS BALANCE</span>
-            <span style={{ color: 'var(--tomorro-fluo-green)', fontSize: 16 }}>✳</span>
-          </div>
-          <strong className="tomorro-metric-val">{currentBalance.toLocaleString()} pts</strong>
-          <span className="tomorro-metric-sub">↑ +320 pts this month</span>
+          <div className="tomorro-metric-top"><span>SỐ DƯ ĐIỂM</span><span>✳</span></div>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : currentBalance === null ? '—' : currentBalance.toLocaleString() + ' pts'}</strong>
+          <span className="tomorro-metric-sub">Số dư ví hiện tại</span>
         </div>
-
         <div className="tomorro-metric">
-          <div className="tomorro-metric-top">
-            <span>BOTTLES RECYCLED</span>
-            <span style={{ color: 'var(--tomorro-fluo-green)', fontSize: 16 }}>♻</span>
-          </div>
-          <strong className="tomorro-metric-val">128 units</strong>
-          <span className="tomorro-metric-sub">↑ 16% over last month</span>
+          <div className="tomorro-metric-top"><span>BAO BÌ ĐƯỢC NHẬN</span><span>♻</span></div>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : acceptedItems.toLocaleString()}</strong>
+          <span className="tomorro-metric-sub">Tổng số lượng theo phiên</span>
         </div>
-
         <div className="tomorro-metric">
-          <div className="tomorro-metric-top">
-            <span>COMPLETED SESSIONS</span>
-            <span style={{ color: 'var(--tomorro-fluo-green)', fontSize: 16 }}>↻</span>
-          </div>
-          <strong className="tomorro-metric-val">{displaySessions.length || 14} sessions</strong>
-          <span className="tomorro-metric-sub">Active 4 consecutive weeks</span>
+          <div className="tomorro-metric-top"><span>PHIÊN GỬI</span><span>↻</span></div>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : sessionCount.toLocaleString()}</strong>
+          <span className="tomorro-metric-sub">Tổng số phiên được ghi nhận</span>
         </div>
-
         <div className="tomorro-metric">
-          <div className="tomorro-metric-top">
-            <span>CO₂ OFFSET PREVENTED</span>
-            <span style={{ color: 'var(--tomorro-fluo-green)', fontSize: 16 }}>♧</span>
-          </div>
-          <strong className="tomorro-metric-val">8.4 kg</strong>
-          <span className="tomorro-metric-sub">Equivalent to planting 3 trees</span>
+          <div className="tomorro-metric-top"><span>ĐIỂM ĐÃ NHẬN</span><span>↗</span></div>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : earnedPoints.toLocaleString() + ' pts'}</strong>
+          <span className="tomorro-metric-sub">Theo dữ liệu phiên tái chế</span>
         </div>
       </div>
 
-      {/* 2-Column Bento Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 24 }}>
-        {/* Left: Trend & Activity */}
-        <div style={{ display: 'grid', gap: 24 }}>
-          {/* Recycling Chart */}
-          <div className="tomorro-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div>
-                <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: '#739981' }}>WEEKLY RECYCLING CADENCE</span>
-                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, textTransform: 'uppercase', margin: '4px 0 0', color: '#ffffff' }}>Daily Activity Velocity</h2>
-              </div>
-              <span className="pill pill-green">+14.2% vs previous period</span>
-            </div>
-            <div className="chart" style={{ background: 'transparent' }}>
-              {[45, 60, 50, 75, 55, 90, 80, 100, 65, 85, 70, 95].map((v, i) => (
-                <span key={i} style={{ height: `${v}%` }} title={`Day ${i + 1}: ${v} points`} />
-              ))}
-            </div>
-          </div>
-
-          {/* Activity Table */}
-          <div className="tomorro-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, textTransform: 'uppercase', margin: 0, color: '#ffffff' }}>Recent Infeed Sessions</h2>
-              <Link href="/history" style={{ fontSize: 13, fontWeight: 700, color: 'var(--tomorro-fluo-green)' }}>
-                View All History →
-              </Link>
-            </div>
-            <div className="tomorro-table-wrap">
-              <table className="tomorro-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th>
-                    <th>Station Kiosk</th>
-                    <th>Material Type</th>
-                    <th>Status</th>
-                    <th style={{ textAlign: 'right' }}>Dividend</th>
+      <div className="tomorro-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, textTransform: 'uppercase', margin: 0, color: '#ffffff' }}>Lịch sử phiên gần đây</h2>
+          <Link href="/history" style={{ fontSize: 13, fontWeight: 700, color: 'var(--tomorro-fluo-green)' }}>Xem toàn bộ lịch sử →</Link>
+        </div>
+        <ApiMessage loading={sessions.loading} error={sessions.error} empty={!sessionRows.length}>
+          <div className="tomorro-table-wrap">
+            <table className="tomorro-table">
+              <thead><tr><th>Thời gian</th><th>Mã phiên</th><th>Trạng thái</th><th>Số lượng nhận</th><th style={{ textAlign: 'right' }}>Điểm</th></tr></thead>
+              <tbody>
+                {sessionRows.slice(0, 5).map((row, index) => (
+                  <tr key={String(val(row, 'session_id', 'sessionId') || index)}>
+                    <td>{fmtDate(val(row, 'started_at', 'startedAt'))}</td>
+                    <td>#{val(row, 'session_id', 'sessionId')}</td>
+                    <td><Pill tone={val(row, 'status') === 'COMPLETED' ? 'green' : 'amber'}>{val(row, 'status') || '—'}</Pill></td>
+                    <td>{Number(val(row, 'items_accepted') || 0).toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--tomorro-fluo-green)', fontWeight: 800 }}>
+                      {Number(val(row, 'points_credited', 'points') || 0).toLocaleString()} pts
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {displaySessions.slice(0, 4).map((r, i) => (
-                    <tr key={i}>
-                      <td>{fmtDate(val(r, 'started_at', 'startedAt'))}</td>
-                      <td>{val(r, 'machine_name') || `Station #${val(r, 'session_id', 'sessionId')}`}</td>
-                      <td>
-                        <span className="pill" style={{ background: 'rgba(255,255,255,0.05)', color: '#b5c7bc', fontSize: 11 }}>
-                          {val(r, 'material') || 'PET Clear Resin'}
-                        </span>
-                      </td>
-                      <td><Pill tone="green">Verified</Pill></td>
-                      <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--tomorro-fluo-green)' }}>
-                        +{val(r, 'points') || 10} pts
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-
-        {/* Right: Tier Progress & Quick Redeem */}
-        <div style={{ display: 'grid', gap: 24, alignContent: 'start' }}>
-          {/* Membership Tier Progress */}
-          <div className="tomorro-card" style={{ background: 'linear-gradient(145deg, #0b2518 0%, #05150d 100%)', borderColor: 'rgba(47,224,122,0.3)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--tomorro-fluo-green)' }}>MEMBER TIER STATUS</span>
-              <span className="pill pill-green">Silver Tier</span>
-            </div>
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 32, textTransform: 'uppercase', margin: '10px 0 6px', color: '#ffffff' }}>
-              2,480 / 3,000 Points
-            </h3>
-            <p style={{ color: '#9cb1a4', fontSize: 13, margin: '0 0 16px' }}>
-              Only <strong>520 points</strong> until reaching <strong>Gold Tier</strong> with 1.2x dividend multiplier!
-            </p>
-            <div style={{ height: 10, background: 'rgba(255,255,255,0.08)', borderRadius: 9999, overflow: 'hidden' }}>
-              <div style={{ width: '82%', height: '100%', background: 'linear-gradient(90deg, #2fe07a, #cbf565)', borderRadius: 9999 }} />
-            </div>
-          </div>
-
-          {/* Quick Redeem */}
-          <div className="tomorro-card">
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, textTransform: 'uppercase', margin: '0 0 16px', color: '#ffffff' }}>Featured Partner Vouchers</h3>
-            <div style={{ display: 'grid', gap: 12 }}>
-              {[
-                ['☕', 'Highlands Coffee', '$2.50 Drink Voucher', 800],
-                ['🌱', 'Green Common', '15% Off Organic Plant Meals', 600],
-                ['🚲', 'City Smart Bike', '60-Minute Urban Ride Pass', 500]
-              ].map(([icon, brand, name, pts]) => (
-                <div key={brand} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 22 }}>{icon}</span>
-                    <div>
-                      <strong style={{ display: 'block', fontSize: 13.5, color: '#ffffff' }}>{brand}</strong>
-                      <small style={{ color: '#8da295' }}>{name}</small>
-                    </div>
-                  </div>
-                  <Link href="/rewards" className="btn-tomorro-lime" style={{ padding: '6px 14px', fontSize: 12 }}>
-                    {pts} pts ↗
-                  </Link>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        </ApiMessage>
       </div>
     </div>
   );
 }
-
 /* =========================================================================
-   PAGE 4: REWARDS (UNIFIED IN ENGLISH)
+   PAGE 4: VOUCHER CATALOG
    ========================================================================= */
 
 interface RewardItem {
   id: number;
   brand: string;
-  category: 'coffee' | 'food' | 'bike' | 'eco';
-  icon: string;
+  category: string;
   title: string;
   description: string;
   pointsCost: number;
-  stockLeft: number;
-  popular?: boolean;
+  fulfillmentType: string;
+  availableCodes?: number;
 }
-
-const defaultRewards: RewardItem[] = [
-  { id: 101, brand: 'Highlands Coffee', category: 'coffee', icon: '☕', title: 'Beverage Perk Voucher', description: 'Redeemable on any medium or large craft coffee at nationwide branches.', pointsCost: 800, stockLeft: 42, popular: true },
-  { id: 102, brand: 'Green Common', category: 'food', icon: '🌱', title: '15% Off Plant-Based Meals', description: 'Valid on fresh plant-based dishes and organic market groceries.', pointsCost: 600, stockLeft: 88 },
-  { id: 103, brand: 'Ocean Refill Co.', category: 'eco', icon: '🛍', title: 'Recycled Stainless Tumbler', description: 'Double-walled 500ml vacuum insulated bottle made from certified recycled steel.', pointsCost: 1200, stockLeft: 15, popular: true },
-  { id: 104, brand: 'City Smart Bike', category: 'bike', icon: '🚲', title: '60-Minute Urban Ride Code', description: 'Zero-emission electric city transport across central mobility corridors.', pointsCost: 500, stockLeft: 120 },
-  { id: 105, brand: 'Organic Farm Kitchen', category: 'food', icon: '🥗', title: '$5.00 Farm-to-Table Voucher', description: 'Sustainable seasonal dining powered by regenerative agriculture.', pointsCost: 1500, stockLeft: 20 },
-  { id: 106, brand: 'Circular Canvas', category: 'eco', icon: '♻', title: 'Recycled Organic Tote Bag', description: 'Heavy-duty organic cotton tote bag engineered for thousands of reusable cycles.', pointsCost: 700, stockLeft: 64 },
-  { id: 107, brand: 'The Roastery House', category: 'coffee', icon: '🧋', title: 'Craft Cold Brew Voucher', description: 'Direct-trade cold brew and single-origin pour-overs.', pointsCost: 550, stockLeft: 95 },
-  { id: 108, brand: 'Green Metro EV', category: 'bike', icon: '⚡', title: 'Clean Electric Shuttle Ride', description: '100% clean electric city mobility with zero tailpipe emissions.', pointsCost: 650, stockLeft: 70 }
-];
 
 function Rewards() {
   const result = useApi<unknown>('/vouchers');
+  const account = useApi<Row>('/users/me');
   const rows = rowsFrom<Row>(result.data);
   const [pending, setPending] = useState<number>();
   const [selectedReward, setSelectedReward] = useState<RewardItem | null>(null);
-  const [modalSuccess, setModalSuccess] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [redemption, setRedemption] = useState<Row | null>(null);
+  const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [message, setMessage] = useState('');
 
-  const catalog: RewardItem[] = useMemo(() => {
-    if (rows.length > 0) {
-      return rows.map((r, i) => ({
-        id: Number(val(r, 'voucher_id', 'id') || i + 1),
-        brand: String(val(r, 'partner_name', 'partnerName') || 'BravoForest Partner'),
-        category: 'eco' as const,
-        icon: '✳',
-        title: String(val(r, 'title') || 'Eco Reward Voucher'),
-        description: String(val(r, 'description') || val(r, 'terms') || 'Valid at certified ecological partner network.'),
-        pointsCost: Number(val(r, 'points_cost', 'pointsCost') || 500),
-        stockLeft: 50
-      }));
-    }
-    return defaultRewards;
-  }, [rows]);
+  const catalog: RewardItem[] = useMemo(() => rows.map((row) => ({
+    id: Number(val(row, 'voucher_id', 'id')),
+    brand: String(val(row, 'partner_name', 'partnerName') || ''),
+    category: String(val(row, 'category_name', 'categoryName') || 'Other'),
+    title: String(val(row, 'title') || ''),
+    description: String(val(row, 'description', 'terms') || ''),
+    pointsCost: Number(val(row, 'points_cost', 'pointsCost')),
+    fulfillmentType: String(val(row, 'fulfillment_type', 'fulfillmentType') || ''),
+    availableCodes: val(row, 'fulfillment_type', 'fulfillmentType') === 'CODE_POOL' ? Number(val(row, 'codes_available')) : undefined,
+  })).filter((item) => Number.isInteger(item.id) && item.id > 0 && item.title && Number.isFinite(item.pointsCost)), [rows]);
 
-  const filteredCatalog = useMemo(() => {
-    return catalog.filter(item => {
-      const matchCat = activeCategory === 'all' || item.category === activeCategory;
-      const matchQuery = !searchQuery ||
-        item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.brand.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchQuery;
-    });
-  }, [catalog, activeCategory, searchQuery]);
+  const categories = useMemo(() => Array.from(new Set(catalog.map((item) => item.category)), (category) => category), [catalog]);
+  const filteredCatalog = useMemo(() => catalog.filter((item) => {
+    const matchCategory = activeCategory === 'all' || item.category === activeCategory;
+    const query = searchQuery.trim().toLocaleLowerCase();
+    const matchQuery = !query || item.title.toLocaleLowerCase().includes(query) || item.brand.toLocaleLowerCase().includes(query);
+    return matchCategory && matchQuery;
+  }), [catalog, activeCategory, searchQuery]);
 
   async function handleRedeem(reward: RewardItem) {
     setPending(reward.id);
     setMessage('');
     try {
-      if (rows.length > 0) {
-        await apiPost<Row>('/redemptions', {
-          voucherId: reward.id,
-          idempotencyKey: crypto.randomUUID()
-        });
-        result.refresh();
-      }
+      const response = await apiPost<Row>('/redemptions', {
+        voucherId: reward.id,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setRedemption(response);
       setSelectedReward(reward);
-      setModalSuccess(true);
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'Unable to redeem reward.');
+      result.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Không thể gửi yêu cầu đổi voucher.');
     } finally {
       setPending(undefined);
     }
   }
 
+  const balance = account.data?.balance ?? account.data?.wallet?.balance;
+
   return (
     <div className="tomorro-container">
-      {/* Banner */}
       <div className="tomorro-banner">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 20 }}>
           <div>
-            <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 6 }}>
-              SUSTAINABLE PARTNER ECOSYSTEM
-            </span>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', letterSpacing: -0.5, color: '#ffffff' }}>
-              Turn Empty Bottles Into Daily Perks
+            <span className="eyebrow">VOUCHER ĐANG MỞ</span>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', color: '#ffffff' }}>
+              Đổi điểm lấy voucher
             </h1>
-            <p style={{ color: '#a1b7a9', margin: 0, fontSize: 14.5, maxWidth: 620 }}>
-              Convert the green points you earn from RVM container returns into craft coffee, healthy dining, and clean urban transit.
+            <p style={{ color: '#a1b7a9', margin: 0, fontSize: 14.5 }}>
+              Danh mục và chi phí điểm được lấy từ các voucher đang hoạt động.
             </p>
           </div>
           <div style={{ background: 'rgba(255,255,255,0.05)', padding: '16px 24px', borderRadius: 20, border: '1px solid rgba(47,224,122,0.25)', textAlign: 'right' }}>
-            <span style={{ fontSize: 11, color: '#8da295', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>YOUR AVAILABLE BALANCE</span>
-            <strong style={{ fontFamily: 'var(--font-body)', fontWeight: 800, fontSize: 28, color: 'var(--tomorro-fluo-green)', letterSpacing: -0.5 }}>
-              2,480 <span style={{ fontSize: 14, fontWeight: 500 }}>pts</span>
+            <span style={{ fontSize: 11, color: '#8da295', textTransform: 'uppercase', fontWeight: 700, display: 'block' }}>SỐ DƯ ĐIỂM</span>
+            <strong style={{ fontFamily: 'var(--font-body)', fontWeight: 800, fontSize: 28, color: 'var(--tomorro-fluo-green)' }}>
+              {account.loading ? '…' : balance === undefined || balance === null ? '—' : Number(balance).toLocaleString()}
+              <span style={{ fontSize: 14, fontWeight: 500 }}> pts</span>
             </strong>
           </div>
         </div>
       </div>
 
-      {/* Filter Tabs & Search Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {[
-            ['all', 'All Perks'],
-            ['coffee', '☕ Coffee & Drinks'],
-            ['food', '🌱 Sustainable Food'],
-            ['bike', '🚲 Clean Mobility'],
-            ['eco', '🛍 Reusable Goods']
-          ].map(([cat, title]) => (
+          {['all', ...categories].map((category) => (
             <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`button ${activeCategory === cat ? 'btn-tomorro-lime' : 'btn-tomorro-dark-pill'}`}
+              key={category}
+              onClick={() => setActiveCategory(category)}
+              className={'button ' + (activeCategory === category ? 'btn-tomorro-lime' : 'btn-tomorro-dark-pill')}
               style={{ padding: '8px 18px', fontSize: 13 }}
             >
-              {title}
+              {category === 'all' ? 'Tất cả' : category}
             </button>
           ))}
         </div>
-
         <div style={{ minWidth: 260 }}>
           <input
-            type="text"
+            type="search"
             className="tomorro-input"
-            placeholder="⌕  Search perks, brands..."
+            placeholder="Tìm voucher hoặc đối tác"
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={(event) => setSearchQuery(event.target.value)}
             style={{ borderRadius: 9999, padding: '10px 18px', fontSize: 13 }}
           />
         </div>
       </div>
 
-      {message && (
-        <div className="tomorro-card" role="status" style={{ marginBottom: 20, borderColor: '#f87171', color: '#fca5a5' }}>
-          {message}
-        </div>
-      )}
+      {message && <div className="tomorro-card" role="alert" style={{ marginBottom: 20, borderColor: '#f87171', color: '#fca5a5' }}>{message}</div>}
 
-      {/* Rewards Grid */}
       <ApiMessage loading={result.loading} error={result.error} empty={filteredCatalog.length === 0}>
         <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
-          {filteredCatalog.map(item => (
+          {filteredCatalog.map((item) => (
             <div key={item.id} className="tomorro-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', display: 'grid', placeItems: 'center', fontSize: 24 }}>
-                    {item.icon}
-                  </div>
+                  <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', display: 'grid', placeItems: 'center', fontSize: 24 }}>✳</div>
                   <span className="pill pill-green" style={{ fontSize: 10.5 }}>
-                    {item.popular ? '★ Most Popular' : `${item.stockLeft} Remaining`}
+                    {item.availableCodes === undefined ? 'Đang mở' : item.availableCodes + ' mã còn lại'}
                   </span>
                 </div>
-
                 <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.8, color: '#7a9e86', display: 'block', marginBottom: 4 }}>
-                  {item.brand}
+                  {item.brand || 'Đối tác'}
                 </span>
                 <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, textTransform: 'uppercase', color: '#ffffff', margin: '0 0 8px' }}>{item.title}</h3>
-                <p style={{ color: '#9db4a6', fontSize: 13.5, lineHeight: 1.5, marginBottom: 18 }}>{item.description}</p>
+                {item.description && <p style={{ color: '#9db4a6', fontSize: 13.5, lineHeight: 1.5, marginBottom: 18 }}>{item.description}</p>}
               </div>
-
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'var(--font-body)', fontWeight: 800, fontSize: 16, color: 'var(--tomorro-fluo-green)' }}>
-                  <span>✳</span> {item.pointsCost.toLocaleString()} <small style={{ fontSize: 12, fontWeight: 500, color: '#7a9183' }}>pts</small>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 800, fontSize: 16, color: 'var(--tomorro-fluo-green)' }}>
+                  ✳ {item.pointsCost.toLocaleString()} <small style={{ fontSize: 12, fontWeight: 500, color: '#7a9183' }}>pts</small>
                 </div>
                 <button
-                  disabled={pending === item.id}
+                  disabled={pending === item.id || (item.availableCodes !== undefined && item.availableCodes < 1)}
                   className="btn-tomorro-lime"
                   style={{ padding: '8px 18px', fontSize: 12.5 }}
                   onClick={() => handleRedeem(item)}
                 >
-                  {pending === item.id ? 'Claiming…' : 'Redeem Perk ↗'}
+                  {pending === item.id ? 'Đang gửi…' : 'Đổi voucher ↗'}
                 </button>
               </div>
             </div>
@@ -1364,58 +1177,32 @@ function Rewards() {
         </div>
       </ApiMessage>
 
-      {/* Redemption Success Modal */}
-      {modalSuccess && selectedReward && (
-        <div className="modal-overlay" onClick={() => setModalSuccess(false)}>
-          <div className="tomorro-auth-card" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+      {selectedReward && redemption && (
+        <div className="modal-overlay" onClick={() => { setSelectedReward(null); setRedemption(null); }}>
+          <div className="tomorro-auth-card" style={{ maxWidth: 460 }} onClick={(event) => event.stopPropagation()}>
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <div style={{ width: 64, height: 64, borderRadius: 20, background: 'rgba(47,224,122,0.15)', border: '1px solid var(--tomorro-fluo-green)', display: 'grid', placeItems: 'center', fontSize: 32, margin: '0 auto 14px' }}>
-                {selectedReward.icon}
-              </div>
-              <span className="pill pill-green" style={{ marginBottom: 8 }}>REDEEMED SUCCESSFULLY</span>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 28, textTransform: 'uppercase', margin: '6px 0', letterSpacing: -0.5, color: '#ffffff' }}>
-                Congratulations on Your Reward!
+              <div style={{ width: 64, height: 64, borderRadius: 20, background: 'rgba(47,224,122,0.15)', border: '1px solid var(--tomorro-fluo-green)', display: 'grid', placeItems: 'center', fontSize: 32, margin: '0 auto 14px' }}>✳</div>
+              <span className="pill pill-green" style={{ marginBottom: 8 }}>YÊU CẦU ĐÃ ĐƯỢC GỬI</span>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 28, textTransform: 'uppercase', margin: '6px 0', color: '#ffffff' }}>
+                Đang xử lý voucher
               </h2>
               <p style={{ color: '#9cb1a4', fontSize: 13.5, margin: 0 }}>
-                You redeemed {selectedReward.pointsCost} points for {selectedReward.title}.
+                Yêu cầu đổi “{selectedReward.title}” đã được tiếp nhận. Mã voucher sẽ hiển thị trong ví sau khi đối tác xử lý thành công.
+              </p>
+              <p style={{ color: '#9cb1a4', fontSize: 12, margin: '12px 0 0' }}>
+                Mã yêu cầu: {val(redemption, 'redemptionId', 'redemption_id') || '—'} · Trạng thái: {val(redemption, 'status') || 'PENDING'}
               </p>
             </div>
-
-            <div style={{ background: '#05110c', padding: 20, borderRadius: 16, border: '1px dashed rgba(47,224,122,0.4)', textAlign: 'center', marginBottom: 20 }}>
-              <small style={{ color: '#7a9e86', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700, fontSize: 10 }}>YOUR VOUCHER REDEMPTION CODE</small>
-              <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 24, letterSpacing: 3, color: 'var(--tomorro-fluo-green)', margin: '6px 0 8px' }}>
-                BF-{selectedReward.brand.slice(0, 3).toUpperCase()}-{(Math.random() * 10000 | 0).toString().padStart(4, '0')}
-              </div>
-              <small style={{ color: '#688472', fontSize: 12 }}>Valid for 30 days · Present at partner checkout counter</small>
-            </div>
-
-            <div style={{ display: 'grid', gap: 10 }}>
-              <button
-                className="btn-tomorro-lime"
-                style={{ width: '100%', justifyContent: 'center' }}
-                onClick={() => {
-                  alert('Voucher code copied to clipboard!');
-                  setModalSuccess(false);
-                }}
-              >
-                Copy Voucher Code & Close
-              </button>
-              <Link
-                href="/vouchers"
-                className="btn-tomorro-dark-pill"
-                style={{ width: '100%', fontSize: 13, textAlign: 'center', justifyContent: 'center' }}
-                onClick={() => setModalSuccess(false)}
-              >
-                View in My Voucher Wallet →
-              </Link>
-            </div>
+            <Link href="/vouchers" className="btn-tomorro-lime" style={{ width: '100%', justifyContent: 'center' }}
+              onClick={() => { setSelectedReward(null); setRedemption(null); }}>
+              Xem ví voucher
+            </Link>
           </div>
         </div>
       )}
     </div>
   );
 }
-
 /* =========================================================================
    PAGE 5: WALLET (UNIFIED IN ENGLISH)
    ========================================================================= */
@@ -1425,21 +1212,21 @@ function Wallet() {
   const tx = useApi<unknown>('/wallet/transactions');
   const rows = rowsFrom<Row>(tx.data);
 
-  const balance = me.data?.wallet?.balance !== undefined ? Number(me.data.wallet.balance) : 2480;
-  const totalIn = me.data?.wallet?.total_in !== undefined ? Number(me.data.wallet.total_in) : 3120;
-  const totalOut = me.data?.wallet?.total_out !== undefined ? Math.abs(Number(me.data.wallet.total_out)) : 640;
+  const balance = me.data?.wallet?.balance === undefined ? null : Number(me.data.wallet.balance);
+  const totalIn = me.data?.wallet?.total_in === undefined ? null : Number(me.data.wallet.total_in);
+  const totalOut = me.data?.wallet?.total_out === undefined ? null : Math.abs(Number(me.data.wallet.total_out));
 
   return (
     <div className="tomorro-container">
       <div className="tomorro-banner">
         <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 6 }}>
-          IMMUTABLE MARIADB LEDGER
+          ĐIỂM THƯỞNG
         </span>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', color: '#ffffff' }}>
           Green Points Wallet & Audit Ledger
         </h1>
         <p style={{ color: '#9db4a6', margin: 0, fontSize: 14 }}>
-          Each balance accrual is mathematically verified per infeed container transaction at RVM stations.
+          Số dư và các thay đổi điểm được lấy từ lịch sử giao dịch của tài khoản.
         </p>
       </div>
 
@@ -1449,7 +1236,7 @@ function Wallet() {
             <span>AVAILABLE BALANCE</span>
             <span style={{ color: 'var(--tomorro-fluo-green)' }}>✳</span>
           </div>
-          <strong className="tomorro-metric-val">{balance.toLocaleString()} pts</strong>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : balance === null ? '—' : balance.toLocaleString() + ' pts'}</strong>
           <span className="tomorro-metric-sub">Ready for redemption</span>
         </div>
 
@@ -1458,7 +1245,7 @@ function Wallet() {
             <span>CUMULATIVE EARNED</span>
             <span style={{ color: 'var(--tomorro-fluo-green)' }}>↗</span>
           </div>
-          <strong className="tomorro-metric-val">+{totalIn.toLocaleString()} pts</strong>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : totalIn === null ? '—' : '+' + totalIn.toLocaleString() + ' pts'}</strong>
           <span className="tomorro-metric-sub">From verified infeed sessions</span>
         </div>
 
@@ -1467,7 +1254,7 @@ function Wallet() {
             <span>REDEEMED FOR VOUCHERS</span>
             <span style={{ color: '#f59e0b' }}>↘</span>
           </div>
-          <strong className="tomorro-metric-val">-{totalOut.toLocaleString()} pts</strong>
+          <strong className="tomorro-metric-val">{me.loading ? '…' : totalOut === null ? '—' : '-' + totalOut.toLocaleString() + ' pts'}</strong>
           <span style={{ color: '#f59e0b', fontSize: 12, fontWeight: 600 }}>Partner gifts and perks</span>
         </div>
       </div>
@@ -1529,7 +1316,7 @@ function History() {
           Past RVM Infeed Sessions
         </h1>
         <p style={{ color: '#9db4a6', margin: 0, fontSize: 14 }}>
-          Complete record of verified beverage container returns processed by our AI optical cameras.
+          Các phiên tái chế được hệ thống ghi nhận cho tài khoản này.
         </p>
       </div>
 
@@ -1579,25 +1366,33 @@ function Machines() {
   const locations = useApi<unknown>('/locations');
   const map = useApi<unknown>('/map');
   const rows = rowsFrom<Row>(locations.data);
+  const mapPoints = useMemo(() => rowsFrom<Row>(map.data).filter((row) => val(row, 'latitude') !== '' && val(row, 'longitude') !== '').map((row) => ({
+    id: Number(val(row, 'location_id', 'id')),
+    name: String(val(row, 'name') || ''),
+    address: [val(row, 'address'), val(row, 'ward'), val(row, 'district'), val(row, 'city')].filter(Boolean).join(', '),
+    latitude: Number(val(row, 'latitude')),
+    longitude: Number(val(row, 'longitude')),
+    machineCount: Number(val(row, 'machine_count', 'machineCount') || 0),
+  })).filter((point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude)), [map.data]);
 
   return (
     <div className="tomorro-container">
       <div className="tomorro-banner">
         <span style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--tomorro-fluo-green)', display: 'block', marginBottom: 6 }}>
-          NATIONWIDE RECOVERY INFRASTRUCTURE
+          ĐỊA ĐIỂM ĐƯỢC CÔNG KHAI
         </span>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(28px, 4vw, 42px)', textTransform: 'uppercase', margin: '4px 0 8px', color: '#ffffff' }}>
           Find an RVM Station Near You
         </h1>
         <p style={{ color: '#9db4a6', margin: 0, fontSize: 14 }}>
-          Real-time interactive geospatial directory and live infeed operational status.
+          Bản đồ và danh sách được tạo từ địa điểm có tọa độ trong hệ thống.
         </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 20 }}>
         <div className="tomorro-card" style={{ padding: 12 }}>
-          <ApiMessage loading={map.loading} error={map.error} empty={!rowsFrom(map.data).length}>
-            <RvmMap />
+          <ApiMessage loading={map.loading} error={map.error} empty={!mapPoints.length}>
+            <RvmMap points={mapPoints} />
           </ApiMessage>
         </div>
 
@@ -1608,7 +1403,7 @@ function Machines() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <Pill tone={val(r, 'isActive', 'is_active') === false ? 'red' : 'green'}>
-                      {val(r, 'isActive', 'is_active') === false ? 'Maintenance' : 'Infeed Active'}
+                      {val(r, 'isActive', 'is_active') === false ? 'Ngừng hoạt động' : 'Địa điểm đang mở'}
                     </Pill>
                     <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, textTransform: 'uppercase', margin: '10px 0 4px', color: '#ffffff' }}>
                       {val(r, 'name')}
@@ -1618,7 +1413,7 @@ function Machines() {
                     </small>
                   </div>
                   <strong style={{ color: 'var(--tomorro-fluo-green)', fontFamily: 'var(--font-display)', fontSize: 22 }}>
-                    {Number(val(r, 'machine_count', 'machineCount') || 1)} Kiosks
+                      {Number(val(r, 'active_machines', 'machine_count', 'machineCount') || 0)} máy
                   </strong>
                 </div>
               </div>
@@ -1648,7 +1443,7 @@ function Vouchers() {
           My Claimed Partner Vouchers
         </h1>
         <p style={{ color: '#9db4a6', margin: 0, fontSize: 14 }}>
-          Active discount codes ready for presentation at partner coffee and lifestyle stores.
+          Trạng thái voucher được đồng bộ từ các yêu cầu đổi điểm của bạn.
         </p>
       </div>
 
@@ -1808,18 +1603,18 @@ function MachineLogin() {
           Enter Kiosk Screen Code
         </h1>
         <p style={{ color: '#9db4a6', margin: 0, fontSize: 14 }}>
-          Pair your live container deposit session to receive verified green points directly into your wallet.
+          Enter the one-time code displayed by a machine to link its session to your account. Points appear after the machine submits a completed result.
         </p>
       </div>
 
       <div className="tomorro-card" style={{ maxWidth: 500 }}>
         <form onSubmit={submit}>
           <div className="tomorro-field">
-            <label>6-8 Character QR / Pairing Code</label>
+            <label>One-time code shown on the machine</label>
             <input
               className="tomorro-input"
               name="qrToken"
-              placeholder="e.g. BF-9482-TX"
+              placeholder="Enter the code shown on the machine"
               required
             />
           </div>

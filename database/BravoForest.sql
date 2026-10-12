@@ -631,7 +631,7 @@ INSERT INTO roles (role_name, description) VALUES
 
 INSERT INTO users (role_id, full_name, email, password_hash, status, email_verified_at)
 SELECT role_id, 'Quản trị viên', 'admin@bravoforest.local',
-       '$2y$10$nfTYN1Hwj45ZVjCM1L7TaOabz9E0Mi1rDsbDYWjxbszvdLrMh8mES',
+       '$2b$12$ubVNySwL1gc2ortT1TN1tO3Etif6GesfRhp3aV.z8B0IkRVkkOqxy',
        'ACTIVE', NOW()
 FROM roles WHERE role_name = 'ADMIN';
 

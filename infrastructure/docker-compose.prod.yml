@@ -33,22 +33,26 @@ services:
   customer-web:
     build: { context: .., dockerfile: infrastructure/docker/customer-web.Dockerfile }
     restart: unless-stopped
-    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
     depends_on: { api: { condition: service_healthy } }
   admin-web:
     build: { context: .., dockerfile: infrastructure/docker/admin-web.Dockerfile }
     restart: unless-stopped
-    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
     depends_on: { api: { condition: service_healthy } }
   rvm-kiosk:
     build: { context: .., dockerfile: infrastructure/docker/rvm-kiosk.Dockerfile }
     restart: unless-stopped
-    environment: { NEXT_PUBLIC_API_URL: /api/v1 }
     depends_on: { api: { condition: service_healthy } }
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports: ["80:80","443:443"]
-    volumes: [./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,./nginx/sites:/etc/nginx/conf.d:ro,./certs:/etc/nginx/certs:ro]
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/conf.d
+      NGINX_ENVSUBST_FILTER: ^(CUSTOMER_DOMAIN|ADMIN_DOMAIN|KIOSK_DOMAIN)$
+      CUSTOMER_DOMAIN: "${CUSTOMER_DOMAIN:?Set CUSTOMER_DOMAIN in .env.prod}"
+      ADMIN_DOMAIN: "${ADMIN_DOMAIN:?Set ADMIN_DOMAIN in .env.prod}"
+      KIOSK_DOMAIN: "${KIOSK_DOMAIN:?Set KIOSK_DOMAIN in .env.prod}"
+    volumes: [./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,./nginx/sites:/etc/nginx/templates:ro,./certs:/etc/nginx/certs:ro]
+    tmpfs: [/etc/nginx/conf.d]
     depends_on: { api: { condition: service_healthy }, customer-web: { condition: service_started }, admin-web: { condition: service_started }, rvm-kiosk: { condition: service_started } }
 volumes: { mariadb_data: {name: bravoforest_prod_mariadb_data}, redis_data: {name: bravoforest_prod_redis_data} }

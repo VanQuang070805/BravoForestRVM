@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
-  title: 'BravoForest — Reverse Vending, Powered by AI',
-  description: 'Automated closed-loop container recovery and verified circular economy dividends.'
+  title: 'BravoForest | Recycling returns and rewards',
+  description: 'Find return locations, review recorded sessions, manage points, and browse available vouchers.'
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

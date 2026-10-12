@@ -44,9 +44,17 @@ export function RvmMap({
         const pos = { lat: p.latitude, lng: p.longitude };
         bounds.extend(pos);
         const marker = new maps.Marker({ map, position: pos, title: p.name });
-        const info = new maps.InfoWindow({
-          content: `<div style="color:#071910;padding:4px"><strong>${p.name}</strong><br><small>${p.address}</small><br><span style="color:#15803d;font-weight:700">${p.machineCount} Kiosks Active</span></div>`
-        });
+        const content = document.createElement('div');
+        content.style.cssText = 'color:#071910;padding:4px';
+        const title = document.createElement('strong');
+        title.textContent = p.name;
+        const address = document.createElement('small');
+        address.textContent = p.address;
+        const count = document.createElement('span');
+        count.style.cssText = 'color:#15803d;font-weight:700';
+        count.textContent = `${p.machineCount} ${p.machineCount === 1 ? 'machine' : 'machines'}`;
+        content.append(title, document.createElement('br'), address, document.createElement('br'), count);
+        const info = new maps.InfoWindow({ content });
         marker.addListener('click', () => info.open({ map, anchor: marker }));
       });
 

@@ -4,6 +4,8 @@ COPY package.json package-lock.json ./
 COPY apps/customer-web/package.json apps/customer-web/package.json
 COPY packages/ui/package.json packages/ui/package.json
 RUN npm ci
+ARG NEXT_PUBLIC_API_URL=/api/v1
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY apps/customer-web apps/customer-web
 COPY packages/ui packages/ui
 RUN npm run build -w @bravoforest/customer-web && npm prune --omit=dev

@@ -260,6 +260,11 @@ html, body {
   transform: translateY(-1px);
 }
 
+.tomorro-landing-wrap {
+  width: 100%;
+  overflow: hidden;
+}
+
 /* ========================================================
    SECTION 1: HERO SECTION (DEEP EMERALD FORESTRY)
    ======================================================== */

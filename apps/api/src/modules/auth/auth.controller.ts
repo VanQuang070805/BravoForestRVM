@@ -51,8 +51,16 @@ export class AuthController {
   @Public()
   @Post('logout')
   async logout(@Body() dto: RefreshDto, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
-    await this.auth.logout(dto.refreshToken ?? request.cookies?.refresh_token);
-    response.clearCookie('refresh_token', { path: '/api/v1/auth', sameSite: 'strict', secure: process.env.NODE_ENV === 'production', httpOnly: true });
+    try {
+      await this.auth.logout(dto.refreshToken ?? request.cookies?.refresh_token);
+    } finally {
+      response.clearCookie('refresh_token', {
+        path: '/api/v1/auth',
+        sameSite: 'strict',
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+      });
+    }
     return { ok: true };
   }
 
