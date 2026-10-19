@@ -1,23 +1,45 @@
 import type { Metadata } from 'next';
+import { Be_Vietnam_Pro, JetBrains_Mono, Newsreader } from 'next/font/google';
 import '../styles/globals.css';
 
+const beVietnamPro = Be_Vietnam_Pro({
+  variable: '--font-be-vietnam-pro',
+  subsets: ['latin', 'vietnamese'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap'
+});
+
+const jetBrains = JetBrains_Mono({
+  variable: '--font-jetbrains',
+  subsets: ['latin', 'vietnamese'],
+  weight: ['400', '500', '600'],
+  display: 'swap'
+});
+
+const newsreader = Newsreader({
+  variable: '--font-newsreader',
+  subsets: ['latin', 'vietnamese'],
+  style: ['italic'],
+  weight: ['400', '500'],
+  display: 'swap'
+});
+
 export const metadata: Metadata = {
-  title: 'BravoForest | Recycling returns and rewards',
-  description: 'Find return locations, review recorded sessions, manage points, and browse available vouchers.'
+  title: 'BravoForest | Hệ sinh thái thu gom bao bì RVM & Đổi thưởng xanh',
+  description: 'Tìm điểm tiếp nhận bao bì RVM, theo dõi điểm thưởng xanh và đổi voucher ưu đãi từ các đối tác.',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.png', type: 'image/png' }
+    ],
+    apple: '/apple-icon.png'
+  }
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Manrope:wght@600;700;800&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body>{children}</body>
+    <html lang="vi" className={`${beVietnamPro.variable} ${jetBrains.variable} ${newsreader.variable}`}>
+      <body className={beVietnamPro.className}>{children}</body>
     </html>
   );
 }

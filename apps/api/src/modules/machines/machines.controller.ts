@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { Public, Roles } from '../../common/security';
 import { MachineAuthGuard } from './machine-auth.guard';
@@ -19,9 +19,9 @@ export class MachinesController {
   constructor(private readonly service: MachinesService) {}
 
   @Public() @Get('locations') locations() { return this.service.locationsList(); }
-  @Public() @Get('map') map() { return this.service.map(); }
+  @Public() @Get('map') map(@Query('search') search = '', @Query('city') city = '', @Query('page') page = '1', @Query('pageSize') pageSize = '20') { return this.service.map(search, city, page, pageSize); }
 
-  @ApiBearerAuth() @Roles('ADMIN', 'TECHNICIAN') @Get('admin/machines') list() { return this.service.list(); }
+  @ApiBearerAuth() @Roles('ADMIN', 'TECHNICIAN') @Get('admin/machines') list(@Query('search') search = '', @Query('status') status = '', @Query('page') page = '1', @Query('pageSize') pageSize = '20') { return this.service.list(search, status, page, pageSize); }
   @ApiBearerAuth() @Roles('ADMIN') @Post('admin/machines') create(@Body() dto: CreateMachineDto, @Req() req: any) { return this.service.create(dto, req.user.sub); }
   @ApiBearerAuth() @Roles('ADMIN') @Patch('admin/machines/:id') update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateMachineDto, @Req() req: any) { return this.service.update(id, dto, req.user.sub); }
   @ApiBearerAuth() @Roles('ADMIN') @Delete('admin/machines/:id') remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) { return this.service.remove(id, req.user.sub); }

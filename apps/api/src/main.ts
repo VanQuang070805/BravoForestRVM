@@ -27,9 +27,12 @@ async function bootstrap() {
 
   // Refresh and logout can authenticate with the HttpOnly cookie, so reject a cross-origin browser request.
   app.use((request: any, response: any, next: () => void) => {
-    const usesRefreshCookie = request.path.endsWith('/auth/refresh') || request.path.endsWith('/auth/logout');
+    const usesRefreshCookie = request.path.endsWith('/refresh') || request.path.endsWith('/logout');
+    const hasRefreshCookie = Boolean(
+      request.cookies?.bf_customer_refresh_token || request.cookies?.bf_admin_refresh_token || request.cookies?.refresh_token,
+    );
     const origin = request.headers.origin;
-    if (usesRefreshCookie && request.method === 'POST' && request.cookies?.refresh_token && (!origin || !origins.includes(origin))) {
+    if (usesRefreshCookie && request.method === 'POST' && hasRefreshCookie && (!origin || !origins.includes(origin))) {
       return response.status(403).json({ message: 'Origin rejected' });
     }
     if (usesRefreshCookie && request.method === 'POST' && origin && !origins.includes(origin)) {
@@ -41,16 +44,18 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.setGlobalPrefix('api/v1');
 
-  const document = SwaggerModule.createDocument(
-    app,
-    new DocumentBuilder()
-      .setTitle('BravoForest API')
-      .setDescription('Reverse vending, wallet and rewards API')
-      .setVersion('1.0')
-      .addBearerAuth()
-      .build(),
-  );
-  SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/docs-json' });
+  if (process.env.NODE_ENV !== 'production') {
+    const document = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle('BravoForest API')
+        .setDescription('Reverse vending, wallet and rewards API')
+        .setVersion('1.0')
+        .addBearerAuth()
+        .build(),
+    );
+    SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/docs-json' });
+  }
   app.enableShutdownHooks();
   await app.listen(Number(process.env.PORT ?? 4000), '0.0.0.0');
 }

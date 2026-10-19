@@ -12,7 +12,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { Request } from 'express';
 import { DataSource } from 'typeorm';
 
-export type Principal = { sub: string; role: string; jti: string };
+export type Principal = { sub: string; role: string; jti: string; ver?: number };
 export const Public = () => SetMetadata('public', true);
 export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
 
@@ -40,12 +40,15 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const [account] = await this.db.query(
-      `SELECT u.status,u.deleted_at,r.role_name FROM users u
+      `SELECT u.status,u.deleted_at,u.credential_version,r.role_name FROM users u
        JOIN roles r ON r.role_id=u.role_id WHERE u.user_id=?`,
       [principal.sub],
     );
     if (!account || account.status !== 'ACTIVE' || account.deleted_at) {
       throw new UnauthorizedException('Account is inactive');
+    }
+    if (Number(principal.ver ?? 0) !== Number(account.credential_version ?? 0)) {
+      throw new UnauthorizedException('Credentials changed. Please sign in again.');
     }
     request.user = { ...principal, role: account.role_name };
     return true;

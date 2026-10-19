@@ -30,6 +30,10 @@ server {
   ssl_certificate_key /etc/nginx/certs/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
   add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Content-Security-Policy "frame-ancestors 'none';" always;
 
   location /api/ {
     limit_req zone=api_limit burst=40 nodelay;
@@ -55,6 +59,10 @@ server {
   ssl_certificate_key /etc/nginx/certs/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
   add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Content-Security-Policy "frame-ancestors 'none';" always;
 
   location /api/ {
     limit_req zone=api_limit burst=40 nodelay;
@@ -80,6 +88,10 @@ server {
   ssl_certificate_key /etc/nginx/certs/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
   add_header Strict-Transport-Security "max-age=31536000" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Content-Security-Policy "frame-ancestors 'none';" always;
 
   location /api/ {
     limit_req zone=api_limit burst=40 nodelay;

@@ -14,6 +14,7 @@ import { validate } from './config/validation';
 import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CollectionsModule } from './modules/collections/collections.module';
+import { CashoutsModule } from './modules/cashouts/cashouts.module';
 import { CrushingModule } from './modules/crushing/crushing.module';
 import { HealthModule } from './modules/health/health.module';
 import { LocationsModule } from './modules/locations/locations.module';
@@ -30,5 +31,5 @@ import { UsersModule } from './modules/users/users.module';
  TypeOrmModule.forRootAsync({inject:[ConfigService],useFactory:(c:ConfigService)=>({type:'mariadb',host:c.getOrThrow('DB_HOST'),port:c.get<number>('DB_PORT',3306),username:c.getOrThrow('DB_USER'),password:c.get('DB_PASSWORD',''),database:c.getOrThrow('DB_NAME'),entities:[__dirname+'/**/*.entity{.ts,.js}'],autoLoadEntities:true,synchronize:false,logging:false})}),
  RedisModule,ThrottlerModule.forRootAsync({imports:[RedisModule],inject:[REDIS],useFactory:(redis:Redis)=>({throttlers:[{name:'default',ttl:60000,limit:120}],storage:new RedisThrottlerStorage(redis)})}),BullModule.forRootAsync({inject:[ConfigService],useFactory:(c:ConfigService)=>({connection:{url:c.getOrThrow('REDIS_URL')}})}),
  AuthModule,UsersModule,MachinesModule,LocationsModule,SessionsModule,CrushingModule,SensorsModule,
- PointsModule,CollectionsModule,PartnerLinksModule,RewardsModule,AdminModule,HealthModule
+ PointsModule,CollectionsModule,PartnerLinksModule,RewardsModule,CashoutsModule,AdminModule,HealthModule
 ],providers:[{provide:APP_GUARD,useClass:ThrottlerGuard},{provide:APP_GUARD,useClass:JwtAuthGuard},{provide:APP_GUARD,useClass:RolesGuard}]}) export class AppModule{}

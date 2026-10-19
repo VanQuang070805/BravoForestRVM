@@ -3,25 +3,43 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { DataSource } from 'typeorm';
 import { RedeemDto } from './rewards.dto';
+import { pageOptions, pagedQuery } from '../../common/pagination';
 
 @Injectable()
 export class RewardsService {
   constructor(private readonly db: DataSource, @InjectQueue('bravoforest') private readonly queue: Queue) {}
 
-  catalog() {
-    return this.db.query(
+  async catalog(search = '', category = '', page = '1', pageSize = '12') {
+    const paging = pageOptions(page, pageSize);
+    const trimmedSearch = search.trim().slice(0, 100);
+    const term = `%${trimmedSearch}%`;
+    const activeOnly = `v.status='ACTIVE' AND (v.available_from IS NULL OR v.available_from<=NOW())
+      AND (v.available_to IS NULL OR v.available_to>NOW())
+      AND (v.stock_limit IS NULL OR s.redeemed_count<v.stock_limit)
+      AND (v.fulfillment_type<>'CODE_POOL' OR s.codes_available>0)`;
+    const where = `${activeOnly}
+      AND (?='' OR v.title LIKE ? OR v.description LIKE ? OR p.name LIKE ? OR c.name LIKE ?)
+      AND (?='' OR c.name=?)`;
+    const result = await pagedQuery(
+      this.db,
       `SELECT v.*,p.name partner_name,p.logo_url,c.name category_name,
               s.codes_available,s.redeemed_count,
               CASE WHEN v.stock_limit IS NULL OR s.redeemed_count < v.stock_limit THEN 1 ELSE 0 END in_stock
        FROM vouchers v JOIN partners p ON p.partner_id=v.partner_id
        JOIN voucher_categories c ON c.category_id=v.category_id
        JOIN v_voucher_stock s ON s.voucher_id=v.voucher_id
-       WHERE v.status='ACTIVE' AND (v.available_from IS NULL OR v.available_from<=NOW())
-         AND (v.available_to IS NULL OR v.available_to>NOW())
-         AND (v.stock_limit IS NULL OR s.redeemed_count < v.stock_limit)
-         AND (v.fulfillment_type<>'CODE_POOL' OR s.codes_available>0)
-       ORDER BY v.created_at DESC`,
+       WHERE ${where} ORDER BY v.created_at DESC`,
+      `SELECT COUNT(*) total FROM vouchers v JOIN partners p ON p.partner_id=v.partner_id
+       JOIN voucher_categories c ON c.category_id=v.category_id
+       JOIN v_voucher_stock s ON s.voucher_id=v.voucher_id WHERE ${where}`,
+      [trimmedSearch, term, term, term, term, category, category],
+      paging,
     );
+    const categoryRows = await this.db.query(
+      `SELECT DISTINCT c.name FROM vouchers v JOIN voucher_categories c ON c.category_id=v.category_id
+       JOIN v_voucher_stock s ON s.voucher_id=v.voucher_id WHERE ${activeOnly} ORDER BY c.name`,
+    );
+    return { ...result, categories: categoryRows.map((row: { name: string }) => row.name) };
   }
 
   async redeem(userId: string, dto: RedeemDto) {

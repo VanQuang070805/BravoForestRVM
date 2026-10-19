@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Logger, UnauthorizedException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
@@ -35,6 +35,7 @@ export class SessionsService {
 
   async create(machineId: number, mode: 'MEMBER' | 'GUEST' = 'MEMBER') {
     const qrToken = randomBytes(32).toString('hex');
+    const qrTokenHash = createHash('sha256').update(qrToken).digest('hex');
     return this.db.transaction(async (manager) => {
       const [deployment] = await manager.query(
         `SELECT md.deployment_id, m.operational_status
@@ -45,21 +46,50 @@ export class SessionsService {
       if (!deployment) throw new BadRequestException('Machine is not deployed');
       if (deployment.operational_status !== 'ACTIVE') throw new ConflictException('Machine is not available');
 
+      await manager.query(
+        "UPDATE recycling_sessions SET status='EXPIRED',completed_at=COALESCE(completed_at,NOW()) WHERE deployment_id=? AND status='WAITING_LOGIN' AND qr_expires_at<=NOW()",
+        [deployment.deployment_id],
+      );
+      await manager.query(
+        "UPDATE recycling_sessions SET status='CANCELLED',completed_at=COALESCE(completed_at,NOW()) WHERE deployment_id=? AND status IN ('DEPOSITING','PROCESSING') AND started_at<=NOW()-INTERVAL 30 MINUTE",
+        [deployment.deployment_id],
+      );
+      const [activeSession] = await manager.query(
+        "SELECT session_id FROM recycling_sessions WHERE deployment_id=? AND status IN ('WAITING_LOGIN','DEPOSITING','PROCESSING') LIMIT 1 FOR UPDATE",
+        [deployment.deployment_id],
+      );
+      if (activeSession) throw new ConflictException('Machine already has an active session');
+
       const initialStatus = mode === 'GUEST' ? 'DEPOSITING' : 'WAITING_LOGIN';
       const result = await manager.query(
         'INSERT INTO recycling_sessions(deployment_id,qr_token,qr_expires_at,status) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 2 MINUTE),?)',
-        [deployment.deployment_id, qrToken, initialStatus],
+        [deployment.deployment_id, qrTokenHash, initialStatus],
       );
-      return { sessionId: String(result.insertId), qrToken, expiresInSeconds: 120, status: initialStatus };
+      return {
+        sessionId: String(result.insertId),
+        statusToken: qrToken,
+        ...(mode === 'MEMBER' ? { qrToken, expiresInSeconds: 120 } : {}),
+        status: initialStatus,
+      };
     });
   }
 
   async claim(userId: string, token: string) {
     return this.db.transaction(async (manager) => {
-      const [session] = await manager.query('SELECT * FROM recycling_sessions WHERE qr_token=? FOR UPDATE', [token]);
+      const [account] = await manager.query(
+        `SELECT u.user_id FROM users u JOIN roles r ON r.role_id=u.role_id
+         JOIN wallets w ON w.user_id=u.user_id
+         WHERE u.user_id=? AND u.status='ACTIVE' AND u.deleted_at IS NULL
+           AND r.role_name='CUSTOMER' AND w.status='ACTIVE' FOR UPDATE`,
+        [userId],
+      );
+      if (!account) throw new UnauthorizedException('Tài khoản khách hàng hoặc ví điểm không khả dụng');
+
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const [session] = await manager.query('SELECT * FROM recycling_sessions WHERE qr_token=? FOR UPDATE', [tokenHash]);
       if (!session) throw new NotFoundException('Session not found');
       if (new Date(session.qr_expires_at) <= new Date()) throw new ConflictException('QR token expired');
-      const claimable = session.status === 'WAITING_LOGIN' || (session.status === 'DEPOSITING' && !session.user_id);
+      const claimable = session.status === 'WAITING_LOGIN';
       if (!claimable || session.user_id) throw new ConflictException('Session is already linked or closed');
 
       await manager.query(
@@ -68,6 +98,67 @@ export class SessionsService {
       );
       return { sessionId: String(session.session_id), status: 'DEPOSITING' };
     });
+  }
+
+  async machineStatus(machineId: number, sessionId: string, token: string) {
+    if (!/^[a-f0-9]{64}$/i.test(token ?? '')) throw new NotFoundException('Session not found');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const [session] = await this.db.query(
+      `SELECT rs.status,(rs.user_id IS NOT NULL) linked,(rs.qr_expires_at<=NOW()) expired,
+              COUNT(di.rule_id) accepted_items,COALESCE(SUM(pr.points_per_item),0) points
+       FROM recycling_sessions rs JOIN machine_deployments md ON md.deployment_id=rs.deployment_id
+       LEFT JOIN deposit_items di ON di.session_id=rs.session_id
+       LEFT JOIN point_rules pr ON pr.rule_id=di.rule_id
+       WHERE rs.session_id=? AND md.machine_id=? AND rs.qr_token=?
+       GROUP BY rs.session_id`,
+      [sessionId, machineId, tokenHash],
+    );
+    if (!session) throw new NotFoundException('Session not found');
+    const recentItems = await this.db.query(
+      `SELECT di.item_id,COALESCE(ct.name,rr.description,'Bao bì') item_name,
+              (di.rule_id IS NOT NULL) accepted,COALESCE(pr.points_per_item,0) points
+       FROM deposit_items di
+       LEFT JOIN point_rules pr ON pr.rule_id=di.rule_id
+       LEFT JOIN container_types ct ON ct.container_type_id=pr.container_type_id
+       LEFT JOIN reject_reasons rr ON rr.reject_reason_id=di.reject_reason_id
+       WHERE di.session_id=? ORDER BY di.item_id DESC LIMIT 4`,
+      [sessionId],
+    );
+    return {
+      status: session.status,
+      linked: Boolean(session.linked),
+      expired: Boolean(session.expired),
+      acceptedItems: Number(session.accepted_items),
+      points: Number(session.points),
+      recentItems,
+    };
+  }
+
+  async scanOptions(machineId: number) {
+    const [machine] = await this.db.query(
+      `SELECT m.machine_code,l.name location_name,l.address,l.ward,l.district,l.city
+       FROM machines m
+       JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
+       JOIN machine_locations l ON l.location_id=md.location_id AND l.is_active=1
+       WHERE m.machine_id=? AND m.operational_status='ACTIVE'`,
+      [machineId],
+    );
+    if (!machine) throw new NotFoundException('Machine is not deployed or active');
+    const items = await this.db.query(
+      `SELECT DISTINCT pr.rule_id,ct.container_type_id,ct.name container_name,ct.volume_ml,
+              m.code material_code,m.name material_name,pr.points_per_item
+       FROM machine_bins b
+       JOIN materials m ON m.material_id=b.material_id
+       JOIN container_types ct ON ct.material_id=m.material_id AND ct.is_active=1
+       JOIN point_rules pr ON pr.container_type_id=ct.container_type_id
+       JOIN machine_deployments md ON md.machine_id=b.machine_id AND md.removed_at IS NULL
+       JOIN machines machine ON machine.machine_id=md.machine_id
+       WHERE b.machine_id=? AND b.status='ACTIVE' AND machine.operational_status='ACTIVE'
+         AND pr.valid_from<=NOW() AND (pr.valid_to IS NULL OR pr.valid_to>NOW())
+       ORDER BY m.name,ct.volume_ml,ct.name`,
+      [machineId],
+    );
+    return { machine, items };
   }
 
   async scan(machineId: number, sessionId: string, dto: ScanDto, idempotencyKey?: string) {
@@ -137,17 +228,19 @@ export class SessionsService {
           [sessionId],
         );
         if (!session || Number(session.machine_id) !== machineId) throw new NotFoundException('Session not found');
-        if (!['WAITING_LOGIN', 'DEPOSITING'].includes(session.status)) {
-          throw new ConflictException('Session does not accept items');
-        }
+        if (session.status !== 'DEPOSITING') throw new ConflictException('Session does not accept items');
 
         if (dto.ruleId) {
           const [rule] = await manager.query(
             `SELECT pr.rule_id FROM point_rules pr
              JOIN container_types ct ON ct.container_type_id=pr.container_type_id
+             JOIN machine_bins b ON b.material_id=ct.material_id AND b.machine_id=? AND b.status='ACTIVE'
+             JOIN machines m ON m.machine_id=b.machine_id AND m.operational_status='ACTIVE'
+             JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
+             JOIN recycling_sessions rs ON rs.deployment_id=md.deployment_id AND rs.session_id=?
              WHERE pr.rule_id=? AND ct.is_active=1 AND pr.valid_from<=NOW()
                AND (pr.valid_to IS NULL OR pr.valid_to>NOW())`,
-            [dto.ruleId],
+            [machineId, sessionId, dto.ruleId],
           );
           if (!rule) throw new BadRequestException('Point rule is inactive');
         } else {
@@ -162,9 +255,6 @@ export class SessionsService {
           [sessionId, dto.ruleId ?? null, dto.rejectReasonId ?? null, dto.barcode ?? null,
             dto.measuredWeightG ?? null, JSON.stringify(sensorData)],
         );
-        if (session.status === 'WAITING_LOGIN') {
-          await manager.query("UPDATE recycling_sessions SET status='DEPOSITING' WHERE session_id=?", [sessionId]);
-        }
         return { itemId: String(inserted.insertId), accepted: Boolean(dto.ruleId), idempotent: false };
       });
 
@@ -184,12 +274,14 @@ export class SessionsService {
     return this.transition(machineId, id, 'DEPOSITING', 'PROCESSING', 'confirmed_at');
   }
 
-  async cancel(machineId: number, id: string) {
+  async cancel(machineId: number, id: string, token: string) {
+    if (!/^[a-f0-9]{64}$/i.test(token ?? '')) throw new NotFoundException('Session not found');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const result = await this.db.query(
       `UPDATE recycling_sessions rs JOIN machine_deployments md ON md.deployment_id=rs.deployment_id
        SET rs.status='CANCELLED',rs.completed_at=NOW()
-       WHERE rs.session_id=? AND md.machine_id=? AND rs.status IN ('WAITING_LOGIN','DEPOSITING','PROCESSING')`,
-      [id, machineId],
+       WHERE rs.session_id=? AND md.machine_id=? AND rs.qr_token=? AND rs.status IN ('WAITING_LOGIN','DEPOSITING','PROCESSING')`,
+      [id, machineId, tokenHash],
     );
     if (!result.affectedRows) throw new ConflictException('Session cannot be cancelled');
     return { ok: true };
@@ -221,7 +313,7 @@ export class SessionsService {
       if (session.status !== 'PROCESSING') throw new ConflictException('Session must be PROCESSING');
 
       const [totals] = await manager.query(
-        `SELECT COUNT(*) accepted_items,COALESCE(SUM(pr.points_per_item),0) points
+        `SELECT COUNT(di.rule_id) accepted_items,COALESCE(SUM(pr.points_per_item),0) points
          FROM deposit_items di LEFT JOIN point_rules pr ON pr.rule_id=di.rule_id WHERE di.session_id=?`,
         [id],
       );

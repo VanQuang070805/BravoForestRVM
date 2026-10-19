@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" fill="none">
+  <rect width="240" height="64" rx="14" fill="#0A2540"/>
+  <g transform="translate(24, 14)">
+    <text x="0" y="32" font-family="'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="30" fill="#FFFFFF" letter-spacing="4">TOMRA</text>
+    <circle cx="168" cy="24" r="6" fill="#00D4B2"/>
+    <circle cx="184" cy="24" r="3.5" fill="#00A3FF"/>
+  </g>
+</svg>

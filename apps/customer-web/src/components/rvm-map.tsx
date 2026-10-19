@@ -52,7 +52,7 @@ export function RvmMap({
         address.textContent = p.address;
         const count = document.createElement('span');
         count.style.cssText = 'color:#15803d;font-weight:700';
-        count.textContent = `${p.machineCount} ${p.machineCount === 1 ? 'machine' : 'machines'}`;
+        count.textContent = `${p.machineCount} máy RVM`;
         content.append(title, document.createElement('br'), address, document.createElement('br'), count);
         const info = new maps.InfoWindow({ content });
         marker.addListener('click', () => info.open({ map, anchor: marker }));
@@ -93,21 +93,21 @@ export function RvmMap({
     };
   }, [key, points]);
 
-  if (loading) return <div className="map-panel" role="status" aria-label="Loading map">Loading RVM station coordinates…</div>;
-  if (error) return <div className="map-panel" role="alert">Unable to load locations: {error}</div>;
-  if (!points.length) return <div className="map-panel empty">No public RVM stations found on map yet.</div>;
+  if (loading) return <div className="map-panel" role="status" aria-label="Đang tải bản đồ">Đang tải tọa độ các trạm máy RVM…</div>;
+  if (error) return <div className="map-panel" role="alert">Không thể tải bản đồ địa điểm: {error}</div>;
+  if (!points.length) return <div className="map-panel empty">Chưa có tọa độ bản đồ cho các địa điểm này.</div>;
 
   return key ? (
-    <div ref={element} className="map-panel" aria-label="BravoForest Recovery Network Map" style={{ minHeight: 380, borderRadius: 18 }} />
+    <div ref={element} className="map-panel" aria-label="Bản đồ mạng lưới trạm RVM BravoForest" style={{ minHeight: 380, borderRadius: 18 }} />
   ) : (
-    <div className="map-panel map-list" aria-label="RVM Stations List" style={{ padding: 16 }}>
+    <div className="map-panel map-list" aria-label="Các trạm có tọa độ bản đồ">
       {points.map(p => (
-        <div key={p.id} className="map-location" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div key={p.id} className="map-location">
           <div>
-            <strong style={{ display: 'block', color: '#ffffff' }}>{p.name}</strong>
-            <small style={{ color: '#8da295' }}>{p.address}</small>
+            <strong>{p.name}</strong>
+            <small>{p.address}</small>
           </div>
-          <span style={{ color: 'var(--tomorro-fluo-green)', fontWeight: 700, fontSize: 13 }}>{p.machineCount} Kiosks</span>
+          <span>{p.machineCount} máy RVM</span>
         </div>
       ))}
     </div>

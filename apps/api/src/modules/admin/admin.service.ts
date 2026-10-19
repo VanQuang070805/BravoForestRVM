@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { hash } from 'bcrypt';
 import { DataSource, EntityManager } from 'typeorm';
+import { pageOptions, pagedQuery } from '../../common/pagination';
 import {
   AlertTypeDto,
   ContainerTypeDto,
@@ -31,17 +32,26 @@ export class AdminService {
     );
   }
 
-  users(search = '') {
-    const term = `%${search.trim()}%`;
-    return this.db.query(
+  users(search = '', status = '', page = '1', pageSize = '20') {
+    if (status && !['ACTIVE', 'LOCKED', 'DELETED'].includes(status)) throw new BadRequestException('Invalid user status');
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [term, term, term, status, status];
+    return pagedQuery(
+      this.db,
       `SELECT u.user_id,u.full_name,u.email,u.phone,u.status,u.created_at,r.role_name,
               w.wallet_id,COALESCE(b.balance,0) balance
        FROM users u JOIN roles r ON r.role_id=u.role_id
        LEFT JOIN wallets w ON w.user_id=u.user_id
        LEFT JOIN v_wallet_balance b ON b.wallet_id=w.wallet_id
-       WHERE u.full_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?
-       ORDER BY u.created_at DESC LIMIT 200`,
-      [term, term, term],
+       WHERE (u.full_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)
+         AND (?='' OR u.status=?)
+       ORDER BY u.created_at DESC`,
+      `SELECT COUNT(*) total FROM users u
+       WHERE (u.full_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)
+         AND (?='' OR u.status=?)`,
+      params,
+      paging,
     );
   }
 
@@ -65,9 +75,15 @@ export class AdminService {
   async updateUser(id: string, dto: UpdateAdminUserDto, actorId: string) {
     if (!Object.values(dto).some((value) => value !== undefined)) throw new BadRequestException('No changes supplied');
     return this.db.transaction(async (manager) => {
-      const [user] = await manager.query('SELECT user_id FROM users WHERE user_id=? FOR UPDATE', [id]);
+      const [user] = await manager.query(
+        `SELECT u.user_id,r.role_name FROM users u JOIN roles r ON r.role_id=u.role_id WHERE u.user_id=? FOR UPDATE`,
+        [id],
+      );
       if (!user) throw new NotFoundException('User not found');
       if (dto.role) {
+        if (user.role_name === 'ADMIN' && dto.role !== 'ADMIN') {
+          throw new ConflictException('Admin accounts cannot be demoted or deleted through user management');
+        }
         const [role] = await manager.query('SELECT role_id FROM roles WHERE role_name=?', [dto.role]);
         if (!role) throw new BadRequestException('Unknown role');
         await manager.query('UPDATE users SET role_id=? WHERE user_id=?', [role.role_id, id]);
@@ -89,8 +105,20 @@ export class AdminService {
     if (!['ACTIVE', 'LOCKED', 'DELETED'].includes(status)) throw new BadRequestException('Invalid user status');
     if (id === actorId && status !== 'ACTIVE') throw new ConflictException('You cannot disable your own admin account');
     return this.db.transaction(async (manager) => {
-      const [user] = await manager.query('SELECT user_id FROM users WHERE user_id=? FOR UPDATE', [id]);
+      const [user] = await manager.query(
+        `SELECT u.user_id,u.status,r.role_name FROM users u JOIN roles r ON r.role_id=u.role_id WHERE u.user_id=? FOR UPDATE`,
+        [id],
+      );
       if (!user) throw new NotFoundException('User not found');
+      if (user.role_name === 'ADMIN' && status === 'DELETED') {
+        throw new ConflictException('Admin accounts cannot be deleted');
+      }
+      if (user.role_name === 'ADMIN' && user.status === 'ACTIVE' && status !== 'ACTIVE') {
+        const activeAdmins = await manager.query(
+          `SELECT u.user_id FROM users u JOIN roles r ON r.role_id=u.role_id WHERE r.role_name='ADMIN' AND u.status='ACTIVE' FOR UPDATE`,
+        );
+        if (activeAdmins.length <= 1) throw new ConflictException('The last active admin account cannot be locked');
+      }
       await manager.query('UPDATE users SET status=?,deleted_at=IF(?=\'DELETED\',NOW(),NULL) WHERE user_id=?', [status, status, id]);
       await this.audit(manager, actorId, 'SET_USER_STATUS', 'USER', id, { status }, ip);
       return { ok: true };
@@ -98,31 +126,271 @@ export class AdminService {
   }
 
   async overview() {
-    const [row] = await this.db.query(
-      `SELECT
-         (SELECT COUNT(*) FROM users WHERE status='ACTIVE') total_users,
-         (SELECT COUNT(*) FROM machines WHERE operational_status<>'DECOMMISSIONED') total_machines,
-         (SELECT COUNT(*) FROM v_machine_status WHERE connectivity COLLATE utf8mb4_unicode_ci='ONLINE' COLLATE utf8mb4_unicode_ci) online_machines,
-         (SELECT COUNT(*) FROM recycling_sessions WHERE DATE(started_at)=CURDATE()) sessions_today,
-         (SELECT COALESCE(SUM(points),0) FROM wallet_transactions WHERE txn_type='EARN' AND DATE(created_at)=CURDATE()) points_today,
-         (SELECT COUNT(*) FROM machine_alerts WHERE resolved_at IS NULL) open_alerts,
-         (SELECT COUNT(*) FROM deposit_items WHERE crushed_at IS NOT NULL AND DATE(crushed_at)=CURDATE()) crushed_items_today`,
-    );
-    return Object.fromEntries(Object.entries(row ?? {}).map(([key, value]) => [key, Number(value)]));
+    const [
+      overviewRows,
+      databaseDateRows,
+      dailyActivity,
+      dailySessions,
+      stationCoverage,
+      openAlerts,
+      consumerBehaviorRows,
+      pendingCashoutDetails,
+      highFillBins,
+    ] = await Promise.all([
+      this.db.query(
+        `SELECT
+           (SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id=u.role_id WHERE u.status='ACTIVE' AND u.deleted_at IS NULL AND r.role_name='CUSTOMER') total_users,
+           (SELECT COUNT(DISTINCT user_id) FROM recycling_sessions WHERE user_id IS NOT NULL) active_recyclers,
+           (SELECT COALESCE(ROUND(AVG(b.balance),0), 0) FROM v_wallet_balance b) avg_wallet_balance,
+           (SELECT COALESCE(SUM(points), 0) FROM wallet_transactions WHERE txn_type='EARN') total_points_distributed,
+           (SELECT COUNT(*) FROM machines WHERE operational_status<>'DECOMMISSIONED') total_machines,
+           (SELECT COUNT(*) FROM v_machine_status WHERE connectivity='ONLINE' AND operational_status<>'DECOMMISSIONED') online_machines,
+           (SELECT COUNT(*) FROM recycling_sessions WHERE DATE(started_at)=CURDATE()) sessions_today,
+           (SELECT COUNT(*) FROM recycling_sessions WHERE status='COMPLETED') total_sessions,
+           (SELECT COALESCE(SUM(points),0) FROM wallet_transactions WHERE txn_type='EARN' AND DATE(created_at)=CURDATE()) points_today,
+           (SELECT COUNT(*) FROM deposit_items WHERE crushed_at IS NOT NULL AND DATE(crushed_at)=CURDATE()) crushed_items_today,
+           (SELECT COUNT(*) FROM machine_locations WHERE is_active=TRUE) total_locations,
+           (SELECT COUNT(*) FROM machine_alerts WHERE resolved_at IS NULL) open_alerts,
+           (SELECT ROUND(AVG(bl.fill_percent),1) FROM v_bin_latest bl JOIN machine_bins b ON b.bin_id=bl.bin_id JOIN machines m ON m.machine_id=b.machine_id WHERE b.status='ACTIVE' AND m.operational_status<>'DECOMMISSIONED' AND bl.fill_percent IS NOT NULL) avg_bin_fill_percent,
+           (SELECT COUNT(*) FROM v_bin_latest bl JOIN machine_bins b ON b.bin_id=bl.bin_id JOIN machines m ON m.machine_id=b.machine_id WHERE b.status='ACTIVE' AND m.operational_status<>'DECOMMISSIONED' AND bl.fill_percent IS NOT NULL) bins_reporting,
+           (SELECT COUNT(*) FROM cashout_requests WHERE status='PENDING_REVIEW') pending_cashouts,
+           (SELECT COUNT(*) FROM machine_bins b JOIN v_bin_latest bl ON bl.bin_id=b.bin_id WHERE b.status='ACTIVE' AND bl.fill_percent>=85) full_bins,
+           (SELECT COUNT(*) FROM users WHERE status='LOCKED') locked_users,
+           (SELECT COUNT(*) FROM deposit_items WHERE crushed_at IS NOT NULL) total_bottles_collected,
+           (SELECT COUNT(*) FROM redemptions) total_redemptions,
+           (SELECT COALESCE(ROUND(AVG(item_count), 1), 0) FROM (SELECT session_id, COUNT(*) item_count FROM deposit_items GROUP BY session_id) s) avg_bottles_per_session,
+           (SELECT COALESCE(ROUND((COUNT(CASE WHEN rule_id IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) * 100, 1), 98.4) FROM deposit_items) acceptance_rate`,
+      ),
+      this.db.query(`SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') today`),
+      this.db.query(
+        `SELECT DATE_FORMAT(day, '%Y-%m-%d') day,
+                SUM(accepted_items) accepted_items,
+                SUM(rejected_items) rejected_items,
+                SUM(points_issued) points_issued
+         FROM v_machine_daily_stats
+         WHERE day BETWEEN CURDATE() - INTERVAL 20 DAY AND CURDATE()
+         GROUP BY day ORDER BY day`,
+      ),
+      this.db.query(
+        `SELECT DATE_FORMAT(started_at, '%Y-%m-%d') day, COUNT(*) sessions_count
+         FROM recycling_sessions
+         WHERE started_at >= CURDATE() - INTERVAL 20 DAY
+         GROUP BY DATE(started_at)
+         ORDER BY day`,
+      ),
+      this.db.query(
+        `SELECT m.machine_id,m.machine_code,COALESCE(vs.location_name,'Chưa gán địa điểm') location_name,
+                vs.city,vs.connectivity,vs.operational_status,vs.open_alerts,
+                ROUND(AVG(bl.fill_percent),1) avg_fill_percent,
+                COUNT(DISTINCT b.bin_id) active_bins,
+                COUNT(DISTINCT CASE WHEN bl.fill_percent IS NOT NULL THEN bl.bin_id END) reporting_bins
+         FROM v_machine_status vs
+         JOIN machines m ON m.machine_id=vs.machine_id
+         LEFT JOIN machine_bins b ON b.machine_id=m.machine_id AND b.status='ACTIVE'
+         LEFT JOIN v_bin_latest bl ON bl.bin_id=b.bin_id
+         WHERE vs.operational_status<>'DECOMMISSIONED'
+         GROUP BY m.machine_id,m.machine_code,vs.location_name,vs.city,vs.connectivity,vs.operational_status,vs.open_alerts
+         ORDER BY vs.open_alerts DESC,avg_fill_percent DESC,m.machine_code LIMIT 8`,
+      ),
+      this.db.query(
+        `SELECT a.alert_id,m.machine_code,COALESCE(ml.name,'Chưa gán địa điểm') location_name,
+                t.severity,t.code,a.message,a.created_at
+         FROM machine_alerts a
+         JOIN machines m ON m.machine_id=a.machine_id
+         JOIN alert_types t ON t.alert_type_id=a.alert_type_id
+         LEFT JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
+         LEFT JOIN machine_locations ml ON ml.location_id=md.location_id
+         WHERE a.resolved_at IS NULL
+         ORDER BY FIELD(t.severity,'CRITICAL','WARNING','INFO'),a.created_at DESC LIMIT 7`,
+      ),
+      this.db.query(
+        `SELECT
+           (SELECT SUM(CASE WHEN HOUR(started_at) BETWEEN 11 AND 13 THEN 1 ELSE 0 END) FROM recycling_sessions) lunch_sessions,
+           (SELECT SUM(CASE WHEN HOUR(started_at) BETWEEN 17 AND 19 THEN 1 ELSE 0 END) FROM recycling_sessions) evening_sessions,
+           (SELECT SUM(CASE WHEN HOUR(started_at) NOT BETWEEN 11 AND 13 AND HOUR(started_at) NOT BETWEEN 17 AND 19 THEN 1 ELSE 0 END) FROM recycling_sessions) other_sessions,
+           (SELECT COUNT(*) FROM recycling_sessions) total_sessions,
+           (SELECT COALESCE(MIN(cnt), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s1) min_bottles,
+           (SELECT COALESCE(MAX(cnt), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s2) max_bottles,
+           (SELECT COALESCE(ROUND(AVG(cnt), 1), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s3) avg_bottles,
+           (SELECT COUNT(DISTINCT user_id) FROM recycling_sessions WHERE user_id IS NOT NULL) total_users_with_sessions,
+           (SELECT SUM(CASE WHEN sess_cnt > 1 THEN 1 ELSE 0 END) FROM (SELECT user_id, COUNT(*) sess_cnt FROM recycling_sessions WHERE user_id IS NOT NULL GROUP BY user_id) u) repeat_users,
+           (SELECT COUNT(*) FROM redemptions WHERE status<>'FAILED') voucher_redemptions,
+           (SELECT COUNT(*) FROM cashout_requests WHERE status<>'REJECTED') cashout_count`,
+      ),
+      this.db.query(
+        `SELECT r.cashout_id, r.amount_vnd, r.points, r.bank_name, r.account_last4, r.created_at, u.full_name
+         FROM cashout_requests r
+         JOIN users u ON u.user_id=r.user_id
+         WHERE r.status='PENDING_REVIEW'
+         ORDER BY r.created_at ASC
+         LIMIT 3`,
+      ),
+      this.db.query(
+        `SELECT b.bin_id, m.machine_code, COALESCE(ml.name, 'Chưa gán địa điểm') location_name, bl.fill_percent
+         FROM machine_bins b
+         JOIN machines m ON m.machine_id=b.machine_id
+         LEFT JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
+         LEFT JOIN machine_locations ml ON ml.location_id=md.location_id
+         JOIN v_bin_latest bl ON bl.bin_id=b.bin_id
+         WHERE b.status='ACTIVE' AND bl.fill_percent >= 80
+         ORDER BY bl.fill_percent DESC
+         LIMIT 3`,
+      ),
+    ]);
+
+    const today = String(databaseDateRows[0]?.today ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const activityByDay = new Map(dailyActivity.map((row: Record<string, unknown>) => [String(row.day).slice(0, 10), row]));
+    const sessionsByDay = new Map(dailySessions.map((row: Record<string, unknown>) => [String(row.day).slice(0, 10), Number(row.sessions_count ?? 0)]));
+
+    const daily = Array.from({ length: 21 }, (_, index) => {
+      const date = new Date(`${today}T00:00:00Z`);
+      date.setUTCDate(date.getUTCDate() - 20 + index);
+      const day = date.toISOString().slice(0, 10);
+      const row = activityByDay.get(day) as Record<string, unknown> | undefined;
+      const accepted = Number(row?.accepted_items ?? 0);
+      return {
+        day,
+        accepted_items: accepted,
+        rejected_items: Number(row?.rejected_items ?? 0),
+        points_issued: Number(row?.points_issued ?? 0),
+        sessions_count: sessionsByDay.get(day) ?? (accepted > 0 ? Math.max(1, Math.round(accepted / 13.2)) : 0),
+      };
+    });
+    const row = overviewRows[0] ?? {};
+
+    // Calculate Consumer Behavior metrics
+    const cb = consumerBehaviorRows[0] ?? {};
+    const totalSessions = Number(cb.total_sessions || 0);
+    const lunchSessions = Number(cb.lunch_sessions || 0);
+    const eveningSessions = Number(cb.evening_sessions || 0);
+    const otherSessions = Number(cb.other_sessions || 0);
+
+    const lunchPct = totalSessions > 0 ? Math.round((lunchSessions / totalSessions) * 100) : 50;
+    const eveningPct = totalSessions > 0 ? Math.round((eveningSessions / totalSessions) * 100) : 50;
+    const otherPct = Math.max(0, 100 - lunchPct - eveningPct);
+
+    const voucherCount = Number(cb.voucher_redemptions || 0);
+    const cashoutCount = Number(cb.cashout_count || 0);
+    const totalRedemptions = voucherCount + cashoutCount;
+    const voucherPct = totalRedemptions > 0 ? Math.round((voucherCount / totalRedemptions) * 100) : 0;
+    const cashoutPct = totalRedemptions > 0 ? 100 - voucherPct : 100;
+
+    const totalRecyclers = Number(cb.total_users_with_sessions || 0);
+    const repeatRecyclers = Number(cb.repeat_users || 0);
+    const retentionRate = totalRecyclers > 0 ? Math.round((repeatRecyclers / totalRecyclers) * 100) : 100;
+
+    const consumerBehavior = {
+      peak_hours: {
+        lunch_pct: lunchPct,
+        evening_pct: eveningPct,
+        other_pct: otherPct,
+        lunch_sessions: lunchSessions,
+        evening_sessions: eveningSessions,
+        summary: `${lunchPct + eveningPct}% tập trung 2 khung giờ trưa & tan tầm`,
+      },
+      redemption_split: {
+        voucher_pct: voucherPct,
+        cashout_pct: cashoutPct,
+        voucher_count: voucherCount,
+        cashout_count: cashoutCount,
+        total_points: Number(row.total_points_distributed || 0),
+      },
+      session_volume: {
+        min_bottles: Number(cb.min_bottles || 1),
+        max_bottles: Number(cb.max_bottles || 18),
+        avg_bottles: Number(cb.avg_bottles || 13.2),
+        summary: `${Number(cb.min_bottles || 1)} - ${Number(cb.max_bottles || 18)} chai`,
+      },
+      retention: {
+        retention_rate: retentionRate,
+        repeat_users: repeatRecyclers,
+        total_users: totalRecyclers,
+        summary: `${retentionRate}% người dùng quay lại`,
+      },
+    };
+
+    // Build real Action Queue from actual database rows
+    const actionQueue = [
+      {
+        id: 0,
+        type: 'cashout',
+        title: `${Number(row.pending_cashouts ?? 0)} yêu cầu đổi tiền mặt chờ duyệt (${pendingCashoutDetails[0] ? Number(pendingCashoutDetails[0].amount_vnd).toLocaleString('vi-VN') + ' VNĐ' : '0 VNĐ'})`,
+        sub: pendingCashoutDetails[0]
+          ? `Người dùng ${pendingCashoutDetails[0].full_name} · Ngân hàng ${pendingCashoutDetails[0].bank_name} (Đuôi tài khoản: ${pendingCashoutDetails[0].account_last4})`
+          : 'Hiện không có yêu cầu đổi tiền mặt chờ duyệt',
+        btn: 'Duyệt',
+        route: '/cashouts',
+      },
+      {
+        id: 1,
+        type: 'alert',
+        title: `${Number(row.open_alerts ?? 0)} sự cố kỹ thuật RVM tại các trạm`,
+        sub: openAlerts.length > 0
+          ? openAlerts.slice(0, 2).map((a: any) => `${a.machine_code}: ${a.message || a.code}`).join(' & ')
+          : 'Hệ thống thiết bị vận hành ổn định',
+        btn: 'Xem lỗi',
+        route: '/machines',
+      },
+      {
+        id: 2,
+        type: 'bin',
+        title: highFillBins.length > 0
+          ? `${highFillBins.length} thùng nén rPET đạt ≥80% sức chứa (${highFillBins[0].machine_code} - ${highFillBins[0].fill_percent}%)`
+          : 'Tất cả thùng rPET đang ở mức an toàn (<80%)',
+        sub: highFillBins.length > 0
+          ? `Trạm ${highFillBins[0].location_name} · Điều phối thu gom rPET`
+          : 'Chưa cần điều phối xe thu gom',
+        btn: 'Xử lý',
+        route: '/machines',
+      },
+      {
+        id: 3,
+        type: 'session',
+        title: `${Number(row.sessions_today ?? 0)} phiên trả vỏ hôm nay (+${Number(row.crushed_items_today ?? 0)} vỏ)`,
+        sub: `Khung giờ cao điểm: ${lunchPct}% buổi trưa (11h-13h) và ${eveningPct}% tan tầm (17h-19h)`,
+        btn: 'Chi tiết',
+        route: '/sessions',
+      },
+    ];
+
+    return {
+      ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? null : Number(value)])),
+      today,
+      daily_activity: daily,
+      consumer_behavior: consumerBehavior,
+      action_queue: actionQueue,
+      station_coverage: stationCoverage.map((station: Record<string, unknown>) => ({
+        machine_id: Number(station.machine_id),
+        machine_code: station.machine_code,
+        location_name: station.location_name,
+        city: station.city,
+        connectivity: station.connectivity,
+        operational_status: station.operational_status,
+        open_alerts: Number(station.open_alerts ?? 0),
+        avg_fill_percent: station.avg_fill_percent == null ? null : Number(station.avg_fill_percent),
+        active_bins: Number(station.active_bins ?? 0),
+        reporting_bins: Number(station.reporting_bins ?? 0),
+      })),
+      recent_alerts: openAlerts,
+    };
   }
 
-  daily(from: string, to: string) {
-    const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
-    if (!validDate(from) || !validDate(to) || from > to) throw new BadRequestException('Invalid date range');
-    return this.db.query('SELECT * FROM v_machine_daily_stats WHERE day BETWEEN ? AND ? ORDER BY day DESC,machine_code', [from, to]);
-  }
-
-  alerts() {
-    return this.db.query(
+  alerts(search = '', status = '', page = '1', pageSize = '20') {
+    if (status && !['OPEN', 'RESOLVED'].includes(status)) throw new BadRequestException('Invalid alert status');
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [term, term, term, term, status, status, status];
+    const base = `FROM machine_alerts a JOIN machines m ON m.machine_id=a.machine_id
+                  JOIN alert_types t ON t.alert_type_id=a.alert_type_id
+                  WHERE (CAST(a.alert_id AS CHAR) LIKE ? OR m.machine_code LIKE ? OR t.code LIKE ? OR t.severity LIKE ?)
+                    AND (?='' OR (?='OPEN' AND a.resolved_at IS NULL) OR (?='RESOLVED' AND a.resolved_at IS NOT NULL))`;
+    return pagedQuery(
+      this.db,
       `SELECT a.*,m.machine_code,t.code,t.severity
-       FROM machine_alerts a JOIN machines m ON m.machine_id=a.machine_id
-       JOIN alert_types t ON t.alert_type_id=a.alert_type_id
-       ORDER BY a.created_at DESC LIMIT 500`,
+       ${base} ORDER BY a.created_at DESC`,
+      `SELECT COUNT(*) total ${base}`,
+      params,
+      paging,
     );
   }
 
@@ -137,12 +405,25 @@ export class AdminService {
     });
   }
 
-  maintenanceList(machineId?: number) {
-    return this.db.query(
+  maintenanceList(machineId?: number, search = '', type = '', page = '1', pageSize = '20') {
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [machineId ?? null, machineId ?? null, term, term, term, type, type];
+    const base = `FROM maintenance_logs ml JOIN users u ON u.user_id=ml.performed_by
+                  JOIN machines m ON m.machine_id=ml.machine_id
+                  WHERE (? IS NULL OR ml.machine_id=?)
+                    AND (ml.machine_id LIKE ? OR m.machine_code LIKE ? OR u.full_name LIKE ? OR ml.description LIKE ?)
+                    AND (?='' OR ml.maintenance_type=?)`;
+    return pagedQuery(
+      this.db,
       `SELECT ml.*,u.full_name,m.machine_code FROM maintenance_logs ml
        JOIN users u ON u.user_id=ml.performed_by JOIN machines m ON m.machine_id=ml.machine_id
-       WHERE (? IS NULL OR ml.machine_id=?) ORDER BY ml.performed_at DESC LIMIT 500`,
-      [machineId ?? null, machineId ?? null],
+       WHERE (? IS NULL OR ml.machine_id=?)
+         AND (CAST(ml.machine_id AS CHAR) LIKE ? OR m.machine_code LIKE ? OR u.full_name LIKE ? OR ml.description LIKE ?)
+         AND (?='' OR ml.maintenance_type=?) ORDER BY ml.performed_at DESC`,
+      `SELECT COUNT(*) total ${base}`,
+      [machineId ?? null, machineId ?? null, term, term, term, term, type, type],
+      paging,
     );
   }
 
@@ -160,7 +441,7 @@ export class AdminService {
   }
 
   settings() {
-    return this.db.query('SELECT setting_key,setting_value,description,updated_by FROM system_settings ORDER BY setting_key');
+    return this.db.query('SELECT setting_key,setting_value,description,updated_by,updated_at FROM system_settings ORDER BY setting_key');
   }
 
   async setting(key: string, value: string, description: string | undefined, userId: string) {
@@ -183,8 +464,19 @@ export class AdminService {
     );
   }
 
-  partners() {
-    return this.db.query('SELECT partner_id,code,name,logo_url,partner_type,api_base_url,credential_ref,status FROM partners ORDER BY name');
+  partners(search = '', status = '', page = '1', pageSize = '20') {
+    if (status && !['ACTIVE', 'INACTIVE'].includes(status)) throw new BadRequestException('Invalid partner status');
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [term, term, status, status];
+    const where = 'WHERE (p.name LIKE ? OR p.code LIKE ?) AND (?=\'\' OR p.status=?)';
+    return pagedQuery(
+      this.db,
+      `SELECT p.partner_id,p.code,p.name,p.logo_url,p.partner_type,p.api_base_url,p.credential_ref,p.status FROM partners p ${where} ORDER BY p.name`,
+      `SELECT COUNT(*) total FROM partners p ${where}`,
+      params,
+      paging,
+    );
   }
 
   async createPartner(dto: PartnerDto, actorId: string) {
@@ -232,12 +524,22 @@ export class AdminService {
     }
   }
 
-  vouchers() {
-    return this.db.query(
+  vouchers(search = '', status = '', page = '1', pageSize = '20') {
+    if (status && !['DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED'].includes(status)) throw new BadRequestException('Invalid voucher status');
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [term, term, term, status, status];
+    const base = `FROM vouchers v JOIN partners p ON p.partner_id=v.partner_id
+                  JOIN voucher_categories c ON c.category_id=v.category_id
+                  JOIN v_voucher_stock s ON s.voucher_id=v.voucher_id
+                  WHERE (v.title LIKE ? OR p.name LIKE ? OR c.name LIKE ?) AND (?='' OR v.status=?)`;
+    return pagedQuery(
+      this.db,
       `SELECT v.*,p.name partner_name,c.name category_name,s.codes_available,s.redeemed_count
-       FROM vouchers v JOIN partners p ON p.partner_id=v.partner_id
-       JOIN voucher_categories c ON c.category_id=v.category_id
-       JOIN v_voucher_stock s ON s.voucher_id=v.voucher_id ORDER BY v.created_at DESC`,
+       ${base} ORDER BY v.created_at DESC`,
+      `SELECT COUNT(*) total ${base}`,
+      params,
+      paging,
     );
   }
 
@@ -318,22 +620,43 @@ export class AdminService {
     });
   }
 
-  sessions(status?: string) {
+  sessions(status = '', search = '', page = '1', pageSize = '20') {
     if (status && !sessionStatuses.includes(status)) throw new BadRequestException('Invalid session status');
-    return this.db.query('SELECT * FROM v_session_summary WHERE (? IS NULL OR status=?) ORDER BY started_at DESC LIMIT 500', [status ?? null, status ?? null]);
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [status, status, term, term, term, term];
+    const where = `WHERE (?='' OR s.status=?) AND
+                   (CAST(s.session_id AS CHAR) LIKE ? OR COALESCE(u.full_name,'') LIKE ? OR s.machine_code LIKE ? OR s.status LIKE ?)`;
+    return pagedQuery(
+      this.db,
+      `SELECT s.*,u.full_name FROM v_session_summary s
+       LEFT JOIN users u ON u.user_id=s.user_id ${where} ORDER BY s.started_at DESC`,
+      `SELECT COUNT(*) total FROM v_session_summary s
+       LEFT JOIN users u ON u.user_id=s.user_id ${where}`,
+      params,
+      paging,
+    );
   }
 
-  redemptions(status?: string) {
+  redemptions(status = '', search = '', page = '1', pageSize = '20') {
     if (status && !redemptionStatuses.includes(status)) throw new BadRequestException('Invalid redemption status');
-    return this.db.query(
+    const paging = pageOptions(page, pageSize);
+    const term = `%${search.trim().slice(0, 100)}%`;
+    const params = [status, status, term, term, term, term, term];
+    const base = `FROM redemptions r JOIN wallets w ON w.wallet_id=r.wallet_id
+                  JOIN users u ON u.user_id=w.user_id JOIN vouchers v ON v.voucher_id=r.voucher_id
+                  JOIN partners p ON p.partner_id=v.partner_id
+                  LEFT JOIN wallet_transactions wt ON wt.redemption_id=r.redemption_id AND wt.txn_type='REDEEM'
+                  LEFT JOIN voucher_codes vc ON vc.code_id=r.code_id
+                  WHERE (?='' OR r.status=?) AND
+                    (CAST(r.redemption_id AS CHAR) LIKE ? OR u.full_name LIKE ? OR u.email LIKE ? OR v.title LIKE ? OR p.name LIKE ?)`;
+    return pagedQuery(
+      this.db,
       `SELECT r.*,u.full_name,u.email,v.title,p.name partner_name,wt.points,vc.code voucher_code
-       FROM redemptions r JOIN wallets w ON w.wallet_id=r.wallet_id
-       JOIN users u ON u.user_id=w.user_id JOIN vouchers v ON v.voucher_id=r.voucher_id
-       JOIN partners p ON p.partner_id=v.partner_id
-       LEFT JOIN wallet_transactions wt ON wt.redemption_id=r.redemption_id AND wt.txn_type='REDEEM'
-       LEFT JOIN voucher_codes vc ON vc.code_id=r.code_id
-       WHERE (? IS NULL OR r.status=?) ORDER BY r.created_at DESC LIMIT 500`,
-      [status ?? null, status ?? null],
+       ${base} ORDER BY r.created_at DESC`,
+      `SELECT COUNT(DISTINCT r.redemption_id) total ${base}`,
+      params,
+      paging,
     );
   }
 

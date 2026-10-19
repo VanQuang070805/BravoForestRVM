@@ -2,16 +2,16 @@
 
 export default function ErrorState({ reset }: { error: Error; reset: () => void }) {
   return (
-    <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#071910', color: '#ffffff', padding: 24, textAlign: 'center' }}>
-      <div className="tomorro-auth-card" style={{ maxWidth: 480 }}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 32, textTransform: 'uppercase', margin: '0 0 10px', color: '#ffffff' }}>
-          System Temporarily Unavailable
+    <main className="customer-state-page" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#071910', color: '#ffffff', padding: 24, textAlign: 'center' }}>
+      <div className="customer-state-card" style={{ maxWidth: 480 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 30, textTransform: 'uppercase', lineHeight: 1.25, margin: '0 0 10px', color: '#ffffff' }}>
+          Hệ thống tạm thời gián đoạn
         </h2>
         <p style={{ color: '#9db4a6', fontSize: 14.5, marginBottom: 24 }}>
-          An unexpected error occurred. Please try reloading.
+          Đã xảy ra lỗi không mong muốn. Vui lòng thử tải lại trang.
         </p>
         <button className="btn-tomorro-lime" style={{ width: '100%', justifyContent: 'center' }} onClick={reset}>
-          Retry Session ↗
+          Thử lại phiên kết nối ↗
         </button>
       </div>
     </main>

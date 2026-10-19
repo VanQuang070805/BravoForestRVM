@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" fill="none">
+  <rect width="240" height="64" rx="14" fill="#00467F"/>
+  <g transform="translate(18, 12)">
+    <!-- TH letters -->
+    <text x="0" y="34" font-family="'Inter', -apple-system, sans-serif" font-weight="900" font-size="34" fill="#FFFFFF" letter-spacing="1">TH</text>
+    <!-- true MILK text -->
+    <text x="64" y="22" font-family="'Georgia', serif" font-style="italic" font-weight="700" font-size="16" fill="#75C3F0" letter-spacing="1">true</text>
+    <path d="M102 12 Q105 7 108 12 Q105 17 102 12 Z" fill="#FFD100"/>
+    <text x="64" y="37" font-family="'Inter', -apple-system, sans-serif" font-weight="800" font-size="15" fill="#FFFFFF" letter-spacing="2.5">MILK</text>
+    <!-- Natural flower/star accent -->
+    <circle cx="180" cy="18" r="4" fill="#FFD100"/>
+    <circle cx="187" cy="23" r="3" fill="#75C3F0"/>
+  </g>
+</svg>

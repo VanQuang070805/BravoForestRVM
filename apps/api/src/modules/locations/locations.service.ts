@@ -1,17 +1,33 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import Redis from 'ioredis';
 import { DataSource } from 'typeorm';
+import { REDIS } from '../../common/redis.module';
+import { invalidateRedisJsonCache } from '../../common/redis-json-cache';
 import { UpdateLocationDto } from './locations.dto';
+import { pageOptions, pagedQuery } from '../../common/pagination';
 
 @Injectable()
 export class LocationsService {
-  constructor(private readonly db: DataSource) {}
+  constructor(private readonly db: DataSource, @Inject(REDIS) private readonly redis: Redis) {}
 
-  list() {
-    return this.db.query(
+  list(search = '', city = '', isActive = '', page = '1', pageSize = '20') {
+    const paging = pageOptions(page, pageSize);
+    const trimmedSearch = search.trim().slice(0, 100);
+    const term = `%${trimmedSearch}%`;
+    const params = [trimmedSearch ? 1 : 0, term, term, term, term, term, city, city, isActive, isActive === '1' ? 1 : 0];
+    return pagedQuery(
+      this.db,
       `SELECT l.*,COUNT(md.deployment_id) active_machines
        FROM machine_locations l
        LEFT JOIN machine_deployments md ON md.location_id=l.location_id AND md.removed_at IS NULL
+       WHERE (?=0 OR l.name LIKE ? OR l.address LIKE ? OR l.ward LIKE ? OR l.district LIKE ? OR l.city LIKE ?)
+         AND (?='' OR l.city=?) AND (?='' OR l.is_active=?)
        GROUP BY l.location_id ORDER BY l.name`,
+      `SELECT COUNT(*) total FROM machine_locations l
+       WHERE (?=0 OR l.name LIKE ? OR l.address LIKE ? OR l.ward LIKE ? OR l.district LIKE ? OR l.city LIKE ?)
+         AND (?='' OR l.city=?) AND (?='' OR l.is_active=?)`,
+      params,
+      paging,
     );
   }
 
@@ -42,7 +58,7 @@ export class LocationsService {
     ].filter(([, value]) => value !== undefined) as Array<[string, unknown]>;
     if (!fields.length) return current;
 
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [location] = await manager.query('SELECT location_id FROM machine_locations WHERE location_id=? FOR UPDATE', [id]);
       if (!location) throw new NotFoundException('Location not found');
       if (dto.isActive === false) {
@@ -64,6 +80,8 @@ export class LocationsService {
       const [updated] = await manager.query('SELECT * FROM machine_locations WHERE location_id=?', [id]);
       return updated;
     });
+    await invalidateRedisJsonCache(this.redis, 'rvm-directory');
+    return result;
   }
 
   async get(id: number) {
@@ -73,7 +91,7 @@ export class LocationsService {
   }
 
   async deactivate(id: number, userId: string) {
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [row] = await manager.query('SELECT location_id,is_active FROM machine_locations WHERE location_id=? FOR UPDATE', [id]);
       if (!row) throw new NotFoundException('Location not found');
       if (!row.is_active) return { ok: true, idempotent: true };
@@ -86,10 +104,12 @@ export class LocationsService {
       await manager.query("INSERT INTO audit_logs(user_id,action,entity_type,entity_id) VALUES(?,'DEACTIVATE_LOCATION','MACHINE_LOCATION',?)", [userId, id]);
       return { ok: true, idempotent: false };
     });
+    await invalidateRedisJsonCache(this.redis, 'rvm-directory');
+    return result;
   }
 
   async undeploy(machineId: number, userId: string) {
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [deployment] = await manager.query(
         'SELECT deployment_id FROM machine_deployments WHERE machine_id=? AND removed_at IS NULL FOR UPDATE',
         [machineId],
@@ -99,6 +119,8 @@ export class LocationsService {
       await manager.query("INSERT INTO audit_logs(user_id,action,entity_type,entity_id) VALUES(?,'UNDEPLOY_MACHINE','MACHINE',?)", [userId, machineId]);
       return { ok: true };
     });
+    await invalidateRedisJsonCache(this.redis, 'rvm-directory');
+    return result;
   }
 
   private async geocode(address: { address: string; ward?: string; district?: string; city?: string }) {

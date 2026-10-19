@@ -30,7 +30,7 @@ npm run dev
 
 Local dùng MariaDB từ XAMPP; Docker Compose ở trên chỉ khởi chạy Redis của BravoForest. API và BullMQ worker chạy bằng Node.js trên máy phát triển và cùng kết nối tới XAMPP MariaDB/Redis. Container có prefix `bravoforest-local`, network và volume riêng; không tham gia Compose project `royal-dify`.
 
-API yêu cầu XAMPP đã import schema `BravoForest.sql` và chạy seed tham chiếu `seed_reference_data.sql`. Các tích hợp đối tác dùng adapter contract: `POST /accounts/verify` để xác minh tài khoản và `POST /redemptions` để cấp voucher; production cần `PARTNER_API_ALLOWED_HOSTS` cùng credential riêng cho từng đối tác.
+API yêu cầu XAMPP đã import schema `BravoForest.sql` và chạy seed tham chiếu `seed_reference_data.sql`. Để thử đăng ký/đặt lại mật khẩu local không cần SMTP, bật `DEV_OTP_LOGGING=true` trong `apps/api/.env`; mã OTP chỉ được ghi vào terminal API trong development. Cờ này bị từ chối ở production. Các tích hợp đối tác dùng adapter contract: `POST /accounts/verify` để xác minh tài khoản và `POST /redemptions` để cấp voucher; production cần `PARTNER_API_ALLOWED_HOSTS` cùng credential riêng cho từng đối tác.
 
 Sau khi import, đặt mật khẩu admin bằng hướng dẫn trong [apps/api/README.md](apps/api/README.md). SQL seed không phát hành mật khẩu mặc định.
 
@@ -53,6 +53,6 @@ npm run test:e2e -w @bravoforest/api
 
 ## Docker production
 
-`infrastructure/docker-compose.prod.yml` tách MariaDB, Redis, API, worker, customer web, admin web, kiosk và Nginx thành các service riêng. Trỏ ba tên miền trong `infrastructure/.env.prod` về máy chủ, cấp chứng chỉ TLS có đủ ba tên miền trong SAN và đặt `fullchain.pem` cùng `privkey.pem` vào `infrastructure/certs/`. Nginx chỉ phục vụ HTTPS cho các host đã cấu hình. Dùng `docker compose --env-file infrastructure/.env.prod -f infrastructure/docker-compose.prod.yml up -d --build`; import `database/BravoForest.sql` vào MariaDB production trước khi mở API ra Internet.
+`infrastructure/docker-compose.prod.yml` tách MariaDB, Redis, API, worker, customer web, admin web, kiosk và Nginx thành các service riêng. Trỏ ba tên miền trong `infrastructure/.env.prod` về máy chủ, cấp chứng chỉ TLS có đủ ba tên miền trong SAN và đặt `fullchain.pem` cùng `privkey.pem` vào `infrastructure/certs/`. Sao chép các mẫu `.env.prod.example`, `.env.api.prod.example`, `.env.worker.prod.example` và `.env.partners.prod.example` thành các file tương ứng trong `infrastructure/`, rồi điền secret phù hợp cho từng service. API/worker không nhận `MARIADB_ROOT_PASSWORD`; file `.env.prod` chỉ phục vụ nội suy cấu hình Compose. Tài khoản runtime DB bị giới hạn ở SELECT/INSERT/UPDATE/DELETE. Nginx chuyển HTTP sang HTTPS và thêm các security headers. Không khởi động toàn bộ stack bằng một lệnh trước khi hoàn tất cấu hình DB: chạy theo thứ tự trong [hướng dẫn triển khai bảo mật](docs/security-deployment.md) để giữ API và Nginx đóng trong lúc áp dụng grant/migration và bootstrap admin.
 
 Chi tiết luồng và ranh giới dữ liệu nằm trong `docs/architecture.md`.

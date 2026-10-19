@@ -39,7 +39,7 @@ body {
   padding: 0;
   background-color: #030c08;
   color: var(--kiosk-text-primary);
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   overflow: hidden;
   height: 100vh;
   width: 100vw;
@@ -105,7 +105,7 @@ body {
 }
 
 .kiosk-station-title {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-weight: 800;
   font-size: 16px;
   color: #ffffff;
@@ -131,7 +131,7 @@ body {
 }
 
 .kiosk-clock {
-  font-family: 'Manrope', monospace;
+  font-family: 'Be Vietnam Pro', 'Inter', monospace;
   font-size: 18px;
   font-weight: 800;
   color: var(--kiosk-accent);
@@ -233,7 +233,7 @@ body {
 }
 
 .kiosk-title {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: clamp(34px, 4.2vw, 56px);
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -245,7 +245,6 @@ body {
 
 .kiosk-title .text-highlight {
   color: var(--kiosk-accent);
-  text-shadow: 0 0 25px var(--kiosk-accent-glow);
 }
 
 .kiosk-copy {
@@ -347,7 +346,7 @@ body {
 }
 
 .kiosk-material-info h3 {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: 18px;
   font-weight: 800;
   color: #ffffff;
@@ -396,7 +395,7 @@ body {
 }
 
 .kiosk-choice-card h2 {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: 22px;
   font-weight: 800;
   color: #ffffff;
@@ -427,6 +426,58 @@ body {
   overflow: hidden;
   display: grid;
   place-items: center;
+}
+
+.kiosk-scanner-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.kiosk-scanner-status {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  left: 14px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(5, 20, 13, .82);
+  color: var(--kiosk-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-align: center;
+}
+
+.kiosk-scanner-error {
+  max-width: 620px;
+  margin: -12px auto 16px;
+  color: #ffd3c7;
+  font-size: 13px;
+  text-align: center;
+}
+
+.kiosk-scanner-fallback {
+  display: flex;
+  width: min(680px, 100%);
+  gap: 10px;
+  margin: 0 auto 18px;
+}
+
+.kiosk-scanner-fallback input {
+  min-width: 0;
+  flex: 1;
+  padding: 0 20px;
+  border: 1px solid var(--kiosk-border);
+  border-radius: 999px;
+  background: rgba(6, 22, 14, .82);
+  color: #fff;
+  font: 600 13px/1 var(--font-ui);
+}
+
+.kiosk-scanner-fallback .btn-kiosk-touch {
+  min-height: 58px;
+  font-size: 14px;
 }
 
 .kiosk-laser-line {
@@ -461,7 +512,7 @@ body {
 
 .kiosk-infeed-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -484,11 +535,12 @@ body {
 }
 
 .kiosk-metric-box .number {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: clamp(26px, 3vw, 36px);
   font-weight: 800;
   color: #ffffff;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .kiosk-metric-box .unit {
@@ -524,17 +576,44 @@ body {
 
 /* Big Tactile Hardware Control Buttons */
 .kiosk-infeed-buttons {
-  display: flex;
-  justify-content: center;
-  gap: 14px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kiosk-accepted-type {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  text-align: left;
+}
+
+.kiosk-accepted-type span {
+  color: var(--kiosk-text-muted);
+  font-size: 12px;
+}
+
+.kiosk-accepted-type b {
+  color: var(--kiosk-accent);
+  font-size: 13px;
+}
+
+.kiosk-hardware-note {
+  margin: 14px auto 0;
+  color: var(--kiosk-text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 .btn-kiosk-touch {
   min-height: 68px;
   padding: 0 28px;
   border-radius: 9999px;
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -559,7 +638,6 @@ body {
 
 .btn-kiosk-lime:hover {
   background: var(--kiosk-accent-hover);
-  box-shadow: 0 10px 35px var(--kiosk-accent-glow);
 }
 
 .btn-kiosk-dark {
@@ -595,21 +673,22 @@ body {
   padding: 32px 36px;
   max-width: 580px;
   margin: 0 auto 32px;
-  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
   text-align: left;
+  font-variant-numeric: tabular-nums;
 }
 
 .kiosk-receipt-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 2px dashed #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
   padding-bottom: 18px;
   margin-bottom: 20px;
 }
 
 .kiosk-receipt-head h3 {
-  font-family: 'Manrope', sans-serif;
+  font-family: 'Be Vietnam Pro', 'Inter', sans-serif;
   font-size: 20px;
   font-weight: 800;
   margin: 0;

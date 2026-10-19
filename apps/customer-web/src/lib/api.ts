@@ -1,6 +1,21 @@
 const base = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
 const tokenKey = 'bravoforest_access_token';
 const signedOutKey = 'bravoforest_signed_out';
+const refreshLockName = 'bravoforest:customer-auth-refresh:v1';
+const noRefreshPaths = new Set([
+  '/auth/login',
+  '/auth/customer/login',
+  '/auth/register',
+  '/auth/register/verify',
+  '/auth/password-reset/request',
+  '/auth/password-reset/verify',
+  '/auth/password-reset/confirm',
+  '/auth/refresh',
+  '/auth/customer/refresh',
+  '/auth/logout',
+  '/auth/customer/logout',
+]);
+let accessToken: string | null = null;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -9,21 +24,65 @@ export class ApiError extends Error {
 }
 
 function token() {
-  return typeof window === 'undefined' ? null : localStorage.getItem(tokenKey);
+  if (typeof window === 'undefined') return null;
+  // Remove access tokens left by older versions; credentials now live only in memory.
+  removeStored(tokenKey);
+  return accessToken;
+}
+
+function removeStored(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Authentication still works when browser storage is disabled.
+  }
+}
+
+function readStored(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // The access token is memory-only; this marker is only a convenience.
+  }
 }
 
 function saveToken(value?: string) {
   if (typeof window === 'undefined') return;
-  if (value) localStorage.setItem(tokenKey, value);
-  else localStorage.removeItem(tokenKey);
+  accessToken = value ?? null;
+  removeStored(tokenKey);
 }
 
 function isSignedOut() {
-  return typeof window !== 'undefined' && localStorage.getItem(signedOutKey) === '1';
+  return typeof window !== 'undefined' && readStored(signedOutKey) === '1';
 }
 
 function clearSignedOut() {
-  if (typeof window !== 'undefined') localStorage.removeItem(signedOutKey);
+  if (typeof window !== 'undefined') removeStored(signedOutKey);
+}
+
+function refreshWithCookie() {
+  if (!base) throw new ApiError('Thiếu NEXT_PUBLIC_API_URL.', 503);
+  return fetch(`${base}/auth/customer/refresh`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: '{}',
+  }).then((response) => decode<{ accessToken: string }>(response));
+}
+
+function refreshAccessToken() {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request(refreshLockName, refreshWithCookie);
+  }
+  return refreshWithCookie();
 }
 
 async function decode<T>(response: Response): Promise<T> {
@@ -57,15 +116,9 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
     cache: 'no-store',
   });
 
-  if (response.status === 401 && retry && !path.startsWith('/auth/') && !isSignedOut()) {
+  if (response.status === 401 && retry && !noRefreshPaths.has(path) && !isSignedOut()) {
     try {
-      const refreshed = await fetch(`${base}/auth/refresh`, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: '{}',
-      });
-      const auth = await decode<{ accessToken: string }>(refreshed);
+      const auth = await refreshAccessToken();
       if (isSignedOut()) throw new ApiError('Phiên đăng nhập đã kết thúc.', 401);
       saveToken(auth.accessToken);
       return request<T>(path, init, false);
@@ -76,7 +129,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   }
 
   const result = await decode<T>(response);
-  if (path === '/auth/login' || path === '/auth/register') clearSignedOut();
+  if (path === '/auth/login' || path === '/auth/customer/login' || path === '/auth/register/verify') clearSignedOut();
   return result;
 }
 
@@ -98,9 +151,13 @@ export function clearAccessToken() {
   saveToken();
 }
 
+export function setAccessToken(value: string) {
+  saveToken(value);
+}
+
 export function markSignedOut() {
   if (typeof window !== 'undefined') {
     saveToken();
-    localStorage.setItem(signedOutKey, '1');
+    writeStored(signedOutKey, '1');
   }
 }

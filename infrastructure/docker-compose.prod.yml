@@ -7,9 +7,13 @@ services:
     environment:
       MARIADB_DATABASE: "${MARIADB_DATABASE:-BravoForest}"
       MARIADB_USER: "${MARIADB_USER:?Set MARIADB_USER in .env.prod}"
+      MARIADB_USER_HOST: "%"
       MARIADB_PASSWORD: "${MARIADB_PASSWORD:?Set MARIADB_PASSWORD in .env.prod}"
       MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD in .env.prod}"
-    volumes: [mariadb_data:/var/lib/mysql]
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./mariadb-init/10-runtime-grants.sh:/docker-entrypoint-initdb.d/10-runtime-grants.sh:ro
+    networks: [private_data]
     healthcheck: { test: [CMD, healthcheck.sh, --connect, --innodb_initialized], interval: 10s, timeout: 5s, retries: 10 }
   redis:
     image: redis:7.4-alpine
@@ -17,30 +21,56 @@ services:
     environment: { REDIS_PASSWORD: "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}" }
     command: [sh, -c, 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"']
     volumes: [redis_data:/data]
+    networks: [private_data]
     healthcheck: { test: [CMD-SHELL, 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG'], interval: 10s, timeout: 5s, retries: 10 }
   api:
     build: { context: .., dockerfile: infrastructure/docker/api.Dockerfile }
     restart: unless-stopped
-    env_file: [.env.prod]
+    env_file: [.env.api.prod, .env.partners.prod]
+    environment:
+      NODE_ENV: production
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_NAME: "${MARIADB_DATABASE:-BravoForest}"
+      DB_USER: "${MARIADB_USER:?Set MARIADB_USER in .env.prod}"
+      DB_PASSWORD: "${MARIADB_PASSWORD:?Set MARIADB_PASSWORD in .env.prod}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}@redis:6379"
+    networks: [api_edge, private_data, outbound]
     depends_on: { mariadb: { condition: service_healthy }, redis: { condition: service_healthy } }
     healthcheck: { test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/api/v1/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"], interval: 20s, timeout: 5s, retries: 5 }
   worker:
     build: { context: .., dockerfile: infrastructure/docker/api.Dockerfile }
     command: node dist/worker.js
     restart: unless-stopped
-    env_file: [.env.prod]
+    env_file: [.env.worker.prod, .env.partners.prod]
+    environment:
+      NODE_ENV: production
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+      DB_NAME: "${MARIADB_DATABASE:-BravoForest}"
+      DB_USER: "${MARIADB_USER:?Set MARIADB_USER in .env.prod}"
+      DB_PASSWORD: "${MARIADB_PASSWORD:?Set MARIADB_PASSWORD in .env.prod}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod}@redis:6379"
+    networks: [private_data, outbound]
     depends_on: { mariadb: { condition: service_healthy }, redis: { condition: service_healthy } }
   customer-web:
     build: { context: .., dockerfile: infrastructure/docker/customer-web.Dockerfile }
     restart: unless-stopped
+    networks: [edge]
     depends_on: { api: { condition: service_healthy } }
   admin-web:
     build: { context: .., dockerfile: infrastructure/docker/admin-web.Dockerfile }
     restart: unless-stopped
+    networks: [edge]
     depends_on: { api: { condition: service_healthy } }
   rvm-kiosk:
     build: { context: .., dockerfile: infrastructure/docker/rvm-kiosk.Dockerfile }
     restart: unless-stopped
+    env_file: [.env.kiosk.prod]
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:4000/api/v1
+    networks: [edge]
     depends_on: { api: { condition: service_healthy } }
   nginx:
     image: nginx:1.27-alpine
@@ -54,5 +84,12 @@ services:
       KIOSK_DOMAIN: "${KIOSK_DOMAIN:?Set KIOSK_DOMAIN in .env.prod}"
     volumes: [./nginx/nginx.conf:/etc/nginx/nginx.conf:ro,./nginx/sites:/etc/nginx/templates:ro,./certs:/etc/nginx/certs:ro]
     tmpfs: [/etc/nginx/conf.d]
+    networks: [edge, api_edge]
     depends_on: { api: { condition: service_healthy }, customer-web: { condition: service_started }, admin-web: { condition: service_started }, rvm-kiosk: { condition: service_started } }
 volumes: { mariadb_data: {name: bravoforest_prod_mariadb_data}, redis_data: {name: bravoforest_prod_redis_data} }
+networks:
+  edge: {}
+  api_edge: {}
+  outbound: {}
+  private_data:
+    internal: true

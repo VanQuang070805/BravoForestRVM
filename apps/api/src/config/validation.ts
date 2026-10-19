@@ -4,6 +4,7 @@ import { IsIn, IsInt, IsOptional, IsString, Max, Min, validateSync } from 'class
 
 class Environment {
   @IsOptional() @IsIn(['development', 'test', 'production']) NODE_ENV = 'development';
+  @IsOptional() @IsIn(['true', 'false']) DEV_OTP_LOGGING = 'false';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(65535) PORT = 4000;
   @IsString() DB_HOST!: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(65535) DB_PORT = 3306;
@@ -45,6 +46,9 @@ export function validate(config: Record<string, unknown>) {
     throw new Error('JWT access and refresh secrets must be different');
   }
   if (value.NODE_ENV === 'production') {
+    if (value.DEV_OTP_LOGGING === 'true') {
+      throw new Error('DEV_OTP_LOGGING must be disabled in production');
+    }
     const productionSecrets = [value.DB_PASSWORD, redisUrl.password];
     if (productionSecrets.some((secret) => !secret || knownPlaceholder.test(decodeURIComponent(secret)))) {
       throw new Error('Production database and Redis credentials must be configured and must not use placeholder values');

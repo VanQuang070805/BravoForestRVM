@@ -1,16 +1,25 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { hash } from 'bcrypt';
 import { randomBytes } from 'crypto';
+import Redis from 'ioredis';
 import { DataSource } from 'typeorm';
+import { REDIS } from '../../common/redis.module';
+import { pageOptions, pagedQuery } from '../../common/pagination';
+import { invalidateRedisJsonCache, redisJsonCache } from '../../common/redis-json-cache';
 import { CreateLocationDto, CreateMachineBinDto, CreateMachineDto, HeartbeatDto, TelemetryDto, UpdateMachineBinDto, UpdateMachineDto } from './machines.dto';
 
 @Injectable()
 export class MachinesService {
   private readonly logger = new Logger(MachinesService.name);
-  constructor(private readonly db: DataSource) {}
+  constructor(private readonly db: DataSource, @Inject(REDIS) private readonly redis: Redis) {}
 
-  async list() {
-    return this.db.query(
+  async list(search = '', status = '', page = '1', pageSize = '20') {
+    const paging = pageOptions(page, pageSize);
+    const trimmedSearch = search.trim().slice(0, 100);
+    const term = `%${trimmedSearch}%`;
+    const params = [trimmedSearch ? 1 : 0, term, term, term, term, term, status, status, status];
+    return pagedQuery(
+      this.db,
       `SELECT s.*,
               COALESCE(b.active_bins,0) active_bins,
               COALESCE(c.crushed_items,0) crushed_items,
@@ -22,27 +31,62 @@ export class MachinesService {
                   FROM machine_deployments md JOIN recycling_sessions rs ON rs.deployment_id=md.deployment_id
                   JOIN deposit_items di ON di.session_id=rs.session_id GROUP BY md.machine_id) c
          ON c.machine_id=s.machine_id
+       WHERE (?=0 OR s.machine_code LIKE ? OR s.location_name LIKE ? OR s.city LIKE ?
+              OR CONVERT(s.connectivity USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ?
+              OR s.operational_status LIKE ?)
+         AND (?='' OR s.operational_status=? OR CONVERT(s.connectivity USING utf8mb4) COLLATE utf8mb4_unicode_ci=?)
        ORDER BY s.machine_code`,
+      `SELECT COUNT(*) total FROM v_machine_status s
+       WHERE (?=0 OR s.machine_code LIKE ? OR s.location_name LIKE ? OR s.city LIKE ?
+              OR CONVERT(s.connectivity USING utf8mb4) COLLATE utf8mb4_unicode_ci LIKE ?
+              OR s.operational_status LIKE ?)
+         AND (?='' OR s.operational_status=? OR CONVERT(s.connectivity USING utf8mb4) COLLATE utf8mb4_unicode_ci=?)`,
+      params,
+      paging,
     );
   }
 
-  async map() {
-    return this.db.query(
-      `SELECT l.location_id,l.name,l.address,l.ward,l.district,l.city,l.latitude,l.longitude,
-              COUNT(DISTINCT m.machine_id) machine_count,
-              SUM(CASE WHEN m.operational_status='ACTIVE' THEN 1 ELSE 0 END) active_machines,
-              SUM(CASE WHEN m.last_heartbeat_at>=NOW()-INTERVAL 5 MINUTE THEN 1 ELSE 0 END) online_machines
-       FROM machine_locations l
-       LEFT JOIN machine_deployments md ON md.location_id=l.location_id AND md.removed_at IS NULL
-       LEFT JOIN machines m ON m.machine_id=md.machine_id
-       WHERE l.is_active=1
-       GROUP BY l.location_id,l.name,l.address,l.ward,l.district,l.city,l.latitude,l.longitude
-       ORDER BY l.name`,
+  async map(search = '', city = '', page = '1', pageSize = '20') {
+    const paging = pageOptions(page, pageSize);
+    const trimmedSearch = search.trim().slice(0, 100);
+    const trimmedCity = city.trim().slice(0, 100);
+    const term = `%${trimmedSearch}%`;
+    const params = [trimmedSearch ? 1 : 0, term, term, term, term, term, trimmedCity, trimmedCity];
+    return redisJsonCache(this.redis, 'rvm-directory', ['map', trimmedSearch, trimmedCity, paging.page, paging.pageSize], 5, async () => {
+      const result = await pagedQuery(
+        this.db,
+        `SELECT l.location_id,l.name,l.address,l.ward,l.district,l.city,l.latitude,l.longitude,
+                COUNT(DISTINCT m.machine_id) machine_count,
+                COUNT(DISTINCT CASE WHEN m.operational_status='ACTIVE' THEN m.machine_id END) active_machines,
+                COUNT(DISTINCT CASE WHEN m.last_heartbeat_at>=NOW()-INTERVAL 5 MINUTE THEN m.machine_id END) online_machines
+         FROM machine_locations l
+         LEFT JOIN machine_deployments md ON md.location_id=l.location_id AND md.removed_at IS NULL
+         LEFT JOIN machines m ON m.machine_id=md.machine_id
+         WHERE l.is_active=1
+           AND (?=0 OR l.name LIKE ? OR l.address LIKE ? OR l.ward LIKE ? OR l.district LIKE ? OR l.city LIKE ?)
+           AND (?='' OR l.city=?)
+         GROUP BY l.location_id,l.name,l.address,l.ward,l.district,l.city,l.latitude,l.longitude
+         ORDER BY l.name`,
+        `SELECT COUNT(*) total FROM machine_locations l
+         WHERE l.is_active=1
+           AND (?=0 OR l.name LIKE ? OR l.address LIKE ? OR l.ward LIKE ? OR l.district LIKE ? OR l.city LIKE ?)
+           AND (?='' OR l.city=?)`,
+        params,
+        paging,
+      );
+      const cityRows = await this.db.query("SELECT DISTINCT city FROM machine_locations WHERE is_active=1 AND city IS NOT NULL AND city<>'' ORDER BY city");
+      return { ...result, cities: cityRows.map((row: { city: string }) => row.city) };
+    });
+  }
+
+  locationsList(): Promise<unknown> {
+    return redisJsonCache(this.redis, 'rvm-directory', ['locations'], 60, () =>
+      this.db.query('SELECT * FROM machine_locations WHERE is_active=1 ORDER BY name'),
     );
   }
 
-  locationsList() {
-    return this.db.query('SELECT * FROM machine_locations WHERE is_active=1 ORDER BY name');
+  private invalidateDirectoryCache() {
+    return invalidateRedisJsonCache(this.redis, 'rvm-directory');
   }
 
   async createLocation(dto: CreateLocationDto, actorId: string) {
@@ -67,7 +111,7 @@ export class MachinesService {
       throw new BadRequestException('Provide map coordinates or configure GOOGLE_MAPS_SERVER_API_KEY');
     }
 
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const result = await manager.query(
         `INSERT INTO machine_locations(name,address,ward,district,city,latitude,longitude)
          VALUES(?,?,?,?,?,?,?)`,
@@ -80,6 +124,8 @@ export class MachinesService {
       );
       return { locationId: Number(result.insertId), latitude, longitude };
     });
+    await this.invalidateDirectoryCache();
+    return result;
   }
 
   async create(dto: CreateMachineDto, actorId: string) {
@@ -107,7 +153,7 @@ export class MachinesService {
       ['installed_at', dto.installedAt],
     ].filter(([, value]) => value !== undefined) as Array<[string, unknown]>;
     if (!fields.length) throw new BadRequestException('No changes supplied');
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [machine] = await manager.query('SELECT machine_id,operational_status FROM machines WHERE machine_id=? FOR UPDATE', [id]);
       if (!machine) throw new NotFoundException('Machine not found');
       if (machine.operational_status === 'DECOMMISSIONED') throw new ConflictException('A decommissioned machine cannot be edited');
@@ -120,10 +166,12 @@ export class MachinesService {
       const [updated] = await manager.query('SELECT * FROM machines WHERE machine_id=?', [id]);
       return updated;
     });
+    await this.invalidateDirectoryCache();
+    return result;
   }
 
   async remove(id: number, actorId: string) {
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [machine] = await manager.query('SELECT machine_id,operational_status FROM machines WHERE machine_id=? FOR UPDATE', [id]);
       if (!machine) throw new NotFoundException('Machine not found');
       if (machine.operational_status === 'DECOMMISSIONED') return { ok: true, idempotent: true };
@@ -138,6 +186,8 @@ export class MachinesService {
       await manager.query("INSERT INTO audit_logs(user_id,action,entity_type,entity_id) VALUES(?,'DECOMMISSION_MACHINE','MACHINE',?)", [actorId, id]);
       return { ok: true };
     });
+    await this.invalidateDirectoryCache();
+    return result;
   }
 
   async bins(machineId: number) {
@@ -219,7 +269,7 @@ export class MachinesService {
   }
 
   async deploy(machineId: number, locationId: number, actorId: string) {
-    return this.db.transaction(async (manager) => {
+    const result = await this.db.transaction(async (manager) => {
       const [machine] = await manager.query('SELECT machine_id,operational_status FROM machines WHERE machine_id=? FOR UPDATE', [machineId]);
       if (!machine || machine.operational_status === 'DECOMMISSIONED') throw new NotFoundException('Machine not found or decommissioned');
       const [location] = await manager.query('SELECT location_id FROM machine_locations WHERE location_id=? AND is_active=1 FOR UPDATE', [locationId]);
@@ -230,6 +280,8 @@ export class MachinesService {
       await manager.query("INSERT INTO audit_logs(user_id,action,entity_type,entity_id,detail) VALUES(?,'DEPLOY_MACHINE','MACHINE',?,?)", [actorId, machineId, JSON.stringify({ locationId, deploymentId: result.insertId })]);
       return { deploymentId: Number(result.insertId) };
     });
+    await this.invalidateDirectoryCache();
+    return result;
   }
 
   async heartbeat(machineId: number, dto: HeartbeatDto) {

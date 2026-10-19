@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" fill="none">
+  <rect width="240" height="64" rx="14" fill="#003B71"/>
+  <g transform="translate(18, 12)">
+    <path d="M10 6 L32 20 L10 34 Z" fill="#0099FF"/>
+    <path d="M10 6 L24 20 L10 20 Z" fill="#FFFFFF" opacity="0.9"/>
+    <text x="44" y="27" font-family="'Inter', -apple-system, sans-serif" font-weight="800" font-size="21" fill="#FFFFFF" letter-spacing="1">Tetra Pak</text>
+  </g>
+</svg>

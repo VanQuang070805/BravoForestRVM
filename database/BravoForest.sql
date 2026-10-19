@@ -62,6 +62,7 @@ CREATE TABLE users (
     email              VARCHAR(150) UNIQUE,
     phone              VARCHAR(20)  UNIQUE,
     password_hash      VARCHAR(255) NOT NULL,
+    credential_version INT UNSIGNED NOT NULL DEFAULT 0,
     status             ENUM('ACTIVE','LOCKED','DELETED') NOT NULL DEFAULT 'ACTIVE',
     email_verified_at  DATETIME NULL,
     phone_verified_at  DATETIME NULL,
@@ -315,10 +316,11 @@ CREATE TABLE wallets (
 CREATE TABLE wallet_transactions (
     transaction_id  BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     wallet_id       BIGINT UNSIGNED NOT NULL,
-    txn_type        ENUM('EARN','REDEEM','REFUND','ADJUST','EXPIRE') NOT NULL,
+    txn_type        ENUM('EARN','REDEEM','REFUND','ADJUST','EXPIRE','CASHOUT','CASHOUT_REFUND') NOT NULL,
     points          INT NOT NULL,                    -- dương = cộng, âm = trừ
     session_id      BIGINT UNSIGNED NULL,            -- chỉ với EARN
     redemption_id   BIGINT UNSIGNED NULL,            -- chỉ với REDEEM / REFUND
+    cashout_id      BIGINT UNSIGNED NULL,            -- chỉ với CASHOUT / CASHOUT_REFUND
     created_by      BIGINT UNSIGNED NULL,            -- admin, với ADJUST
     note            VARCHAR(255),
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -326,14 +328,17 @@ CREATE TABLE wallet_transactions (
     CONSTRAINT fk_wt_session FOREIGN KEY (session_id) REFERENCES recycling_sessions(session_id),
     CONSTRAINT fk_wt_admin   FOREIGN KEY (created_by) REFERENCES users(user_id),
     CONSTRAINT chk_wt_rules CHECK (
-           (txn_type = 'EARN'   AND points > 0  AND session_id IS NOT NULL AND redemption_id IS NULL)
-        OR (txn_type = 'REDEEM' AND points < 0  AND redemption_id IS NOT NULL AND session_id IS NULL)
-        OR (txn_type = 'REFUND' AND points > 0  AND redemption_id IS NOT NULL AND session_id IS NULL)
-        OR (txn_type = 'ADJUST' AND points <> 0 AND created_by IS NOT NULL AND session_id IS NULL AND redemption_id IS NULL)
-        OR (txn_type = 'EXPIRE' AND points < 0  AND session_id IS NULL AND redemption_id IS NULL)
+           (txn_type = 'EARN'   AND points > 0  AND session_id IS NOT NULL AND redemption_id IS NULL AND cashout_id IS NULL)
+        OR (txn_type = 'REDEEM' AND points < 0  AND redemption_id IS NOT NULL AND session_id IS NULL AND cashout_id IS NULL)
+        OR (txn_type = 'REFUND' AND points > 0  AND redemption_id IS NOT NULL AND session_id IS NULL AND cashout_id IS NULL)
+        OR (txn_type = 'ADJUST' AND points <> 0 AND created_by IS NOT NULL AND session_id IS NULL AND redemption_id IS NULL AND cashout_id IS NULL)
+        OR (txn_type = 'EXPIRE' AND points < 0  AND session_id IS NULL AND redemption_id IS NULL AND cashout_id IS NULL)
+        OR (txn_type = 'CASHOUT' AND points < 0 AND cashout_id IS NOT NULL AND session_id IS NULL AND redemption_id IS NULL)
+        OR (txn_type = 'CASHOUT_REFUND' AND points > 0 AND cashout_id IS NOT NULL AND session_id IS NULL AND redemption_id IS NULL)
     ),
     UNIQUE KEY uq_wt_session (session_id),                    -- 1 phiên chỉ được cộng điểm 1 lần
     UNIQUE KEY uq_wt_redemption (redemption_id, txn_type),    -- 1 lần trừ + tối đa 1 lần hoàn
+    UNIQUE KEY uq_wt_cashout (cashout_id, txn_type),
     INDEX idx_wt_wallet_time (wallet_id, created_at)
 ) ENGINE=InnoDB;
 
@@ -436,8 +441,68 @@ CREATE TABLE redemptions (
     INDEX idx_rd_voucher (voucher_id, status)
 ) ENGINE=InnoDB;
 
+-- =====================================================================
+-- 6.1 ĐỔI ĐIỂM THÀNH TIỀN (MẶC ĐỊNH TẮT, DUYỆT VÀ CHUYỂN KHOẢN THỦ CÔNG)
+-- =====================================================================
+CREATE TABLE cashout_policy (
+    policy_id               TINYINT UNSIGNED PRIMARY KEY,
+    enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
+    points_per_step         INT UNSIGNED NULL,
+    vnd_per_step            BIGINT UNSIGNED NULL,
+    min_points              INT UNSIGNED NULL,
+    max_points_per_request  INT UNSIGNED NULL,
+    max_points_per_day      INT UNSIGNED NULL,
+    version                 INT UNSIGNED NOT NULL DEFAULT 1,
+    updated_by              BIGINT UNSIGNED NULL,
+    updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_cp_user FOREIGN KEY (updated_by) REFERENCES users(user_id),
+    CONSTRAINT chk_cp_values CHECK (
+        policy_id = 1 AND (enabled = FALSE OR (
+            points_per_step > 0 AND vnd_per_step > 0 AND min_points > 0
+            AND max_points_per_request >= min_points
+            AND max_points_per_day >= max_points_per_request
+            AND MOD(min_points, points_per_step) = 0
+            AND MOD(max_points_per_request, points_per_step) = 0
+            AND MOD(max_points_per_day, points_per_step) = 0
+        ))
+    )
+) ENGINE=InnoDB;
+
+INSERT INTO cashout_policy(policy_id,enabled) VALUES(1,FALSE);
+
+CREATE TABLE cashout_requests (
+    cashout_id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    wallet_id           BIGINT UNSIGNED NOT NULL,
+    user_id             BIGINT UNSIGNED NOT NULL,
+    points              INT UNSIGNED NOT NULL,
+    amount_vnd          BIGINT UNSIGNED NOT NULL,
+    points_per_step     INT UNSIGNED NOT NULL,
+    vnd_per_step        BIGINT UNSIGNED NOT NULL,
+    policy_version      INT UNSIGNED NOT NULL,
+    bank_name           VARCHAR(100) NOT NULL,
+    recipient_cipher    TEXT NOT NULL,               -- AES-256-GCM account holder + account number
+    account_last4       CHAR(4) NOT NULL,
+    status              ENUM('PENDING_REVIEW','APPROVED','PAID','REJECTED','FAILED') NOT NULL DEFAULT 'PENDING_REVIEW',
+    decision_reason     VARCHAR(255) NULL,
+    transfer_reference  VARCHAR(120) NULL,
+    idempotency_key     VARCHAR(64) NOT NULL UNIQUE,
+    reviewed_by         BIGINT UNSIGNED NULL,
+    reviewed_at         DATETIME NULL,
+    paid_by             BIGINT UNSIGNED NULL,
+    paid_at             DATETIME NULL,
+    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_co_wallet FOREIGN KEY (wallet_id) REFERENCES wallets(wallet_id),
+    CONSTRAINT fk_co_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_co_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(user_id),
+    CONSTRAINT fk_co_paid_by FOREIGN KEY (paid_by) REFERENCES users(user_id),
+    CONSTRAINT chk_co_values CHECK (points > 0 AND amount_vnd > 0 AND points_per_step > 0 AND vnd_per_step > 0 AND MOD(points, points_per_step) = 0),
+    INDEX idx_co_user_time (user_id, created_at),
+    INDEX idx_co_status_time (status, created_at)
+) ENGINE=InnoDB;
+
 ALTER TABLE wallet_transactions
-    ADD CONSTRAINT fk_wt_redemption FOREIGN KEY (redemption_id) REFERENCES redemptions(redemption_id);
+    ADD CONSTRAINT fk_wt_redemption FOREIGN KEY (redemption_id) REFERENCES redemptions(redemption_id),
+    ADD CONSTRAINT fk_wt_cashout FOREIGN KEY (cashout_id) REFERENCES cashout_requests(cashout_id);
 
 CREATE TABLE partner_api_logs (                      -- nhật ký gọi API đối tác để đối soát
     log_id         BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
@@ -617,22 +682,12 @@ GROUP BY b.bin_id, m.machine_code, mt.name, b.processing;
 
 -- =====================================================================
 -- 9. DỮ LIỆU TỐI THIỂU
--- Chỉ có: 3 vai trò (bắt buộc để khóa ngoại users.role_id hoạt động) và 1 tài khoản ADMIN.
+-- Chỉ seed 3 vai trò. Tạo tài khoản ADMIN sau khi nhập DB bằng lệnh bootstrap
+-- admin:set-password; không dùng mật khẩu mặc định trong SQL.
 -- Mọi bảng còn lại để trống: quyền, vật liệu, loại vỏ, lý do từ chối, loại cảnh báo,
 -- đối tác, danh mục voucher, cấu hình hệ thống... sẽ do admin/ứng dụng tự thêm.
---
--- TÀI KHOẢN ADMIN MẶC ĐỊNH:  admin@bravoforest.local  /  Admin@123456
--- >>> ĐỔI MẬT KHẨU NGAY SAU LẦN ĐĂNG NHẬP ĐẦU TIÊN. <<<
--- Muốn tự đặt mật khẩu: tạo hash bcrypt (PHP: password_hash('mat_khau', PASSWORD_BCRYPT))
--- rồi thay vào cột password_hash bên dưới.
 -- =====================================================================
 INSERT INTO roles (role_name, description) VALUES
   ('CUSTOMER','Khách hàng'), ('ADMIN','Quản trị viên'), ('TECHNICIAN','Kỹ thuật viên / thu gom');
-
-INSERT INTO users (role_id, full_name, email, password_hash, status, email_verified_at)
-SELECT role_id, 'Quản trị viên', 'admin@bravoforest.local',
-       '$2b$12$ubVNySwL1gc2ortT1TN1tO3Etif6GesfRhp3aV.z8B0IkRVkkOqxy',
-       'ACTIVE', NOW()
-FROM roles WHERE role_name = 'ADMIN';
 
 SET FOREIGN_KEY_CHECKS = 1;
