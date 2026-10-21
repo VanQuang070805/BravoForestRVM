@@ -1,0 +1,26 @@
+name: bravoforest-pi
+
+services:
+  rvm-display:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/rvm-kiosk.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3002"
+      API_URL: "${MANAGEMENT_API_URL:?Set MANAGEMENT_API_URL in deploy/pi/.env}"
+      RVM_MACHINE_ID: "${RVM_MACHINE_ID:?Set RVM_MACHINE_ID in deploy/pi/.env}"
+      RVM_API_KEY: "${RVM_API_KEY:?Set RVM_API_KEY in deploy/pi/.env}"
+    ports:
+      - "127.0.0.1:${RVM_DISPLAY_PORT:-3002}:3002"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3002').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

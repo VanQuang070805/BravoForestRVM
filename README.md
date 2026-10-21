@@ -13,6 +13,10 @@ Hệ thống Reverse Vending Machine gồm website khách hàng, màn hình kios
 | Swagger | http://localhost:4000/api/docs | OpenAPI |
 | Redis | localhost:6379 | Redis 7.4, BullMQ |
 
+## Tách máy quản lý và Raspberry Pi
+
+Hướng dẫn triển khai riêng cho máy tính quản lý và Raspberry Pi nằm tại [`deploy/`](deploy/README.md). Máy quản lý có lệnh `npm run dev:management` (không chạy kiosk); Pi có Docker Compose riêng chỉ chạy giao diện RVM.
+
 ## Chạy local với XAMPP
 
 Yêu cầu: Node.js 20+, npm 10+, XAMPP MariaDB 10.4+ và Docker Desktop cho Redis. Dành khoảng 2–3 GB cho source, dependency, build cache và image Redis.

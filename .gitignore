@@ -1,5 +1,8 @@
 # Dependencies
 node_modules/
+.venv/
+__pycache__/
+*.py[cod]
 
 # Builds and coverage
 .next/
@@ -21,6 +24,8 @@ storage/
 uploads/
 logs/
 *.log
+*.sqlite3
+dump.rdb
 
 # Editors and operating systems
 .idea/

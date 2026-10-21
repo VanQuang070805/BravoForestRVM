@@ -100,6 +100,20 @@ export class SessionsService {
     });
   }
 
+  async active(machineId: number) {
+    const [session] = await this.db.query(
+      `SELECT rs.session_id,rs.status,rs.started_at
+       FROM recycling_sessions rs
+       JOIN machine_deployments md ON md.deployment_id=rs.deployment_id
+       WHERE md.machine_id=? AND md.removed_at IS NULL AND rs.status='DEPOSITING'
+       ORDER BY rs.started_at DESC LIMIT 1`,
+      [machineId],
+    );
+    return session
+      ? { sessionId: String(session.session_id), status: session.status }
+      : { sessionId: null, status: 'IDLE' };
+  }
+
   async machineStatus(machineId: number, sessionId: string, token: string) {
     if (!/^[a-f0-9]{64}$/i.test(token ?? '')) throw new NotFoundException('Session not found');
     const tokenHash = createHash('sha256').update(token).digest('hex');

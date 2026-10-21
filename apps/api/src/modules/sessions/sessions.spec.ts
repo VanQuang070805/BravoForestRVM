@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { validateSync } from 'class-validator';
-import { assertSingleOutcome } from './sessions.service';
+import { SessionsService, assertSingleOutcome } from './sessions.service';
 import { ClaimDto } from './sessions.dto';
 
 describe('deposit outcome invariant', () => {
@@ -24,5 +24,22 @@ describe('kiosk login QR token', () => {
     const invalid = new ClaimDto();
     invalid.qrToken = 'not-a-session-token';
     expect(validateSync(invalid).length).toBeGreaterThan(0);
+  });
+});
+
+describe('machine active session', () => {
+  it('returns the current depositing session for the authenticated machine', async () => {
+    const db = { query: jest.fn().mockResolvedValue([{ session_id: 42, status: 'DEPOSITING' }]) };
+    const service = new SessionsService(db as any, {} as any, {} as any);
+
+    await expect(service.active(7)).resolves.toEqual({ sessionId: '42', status: 'DEPOSITING' });
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining("rs.status='DEPOSITING'"), [7]);
+  });
+
+  it('returns an idle state when the machine has no depositing session', async () => {
+    const db = { query: jest.fn().mockResolvedValue([]) };
+    const service = new SessionsService(db as any, {} as any, {} as any);
+
+    await expect(service.active(7)).resolves.toEqual({ sessionId: null, status: 'IDLE' });
   });
 });

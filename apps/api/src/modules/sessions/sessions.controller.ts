@@ -39,6 +39,13 @@ export class SessionsController {
 
   @Public()
   @UseGuards(MachineAuthGuard)
+  @Get('machine/sessions/active')
+  active(@Req() request: any) {
+    return this.service.active(request.machineId);
+  }
+
+  @Public()
+  @UseGuards(MachineAuthGuard)
   @Get('machine/sessions/:id/status')
   status(@Req() request: any, @Param('id') id: string, @Headers('x-session-token') token?: string) {
     return this.service.machineStatus(request.machineId, id, token ?? '');
