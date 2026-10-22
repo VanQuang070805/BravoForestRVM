@@ -25,7 +25,8 @@ INSERT INTO reject_reasons(code, description) VALUES
   ('UNSUPPORTED_MATERIAL', 'Vật liệu không được máy hỗ trợ'),
   ('WEIGHT_OUT_OF_RANGE', 'Khối lượng ngoài ngưỡng cho phép'),
   ('DAMAGED_CONTAINER', 'Vỏ chai hoặc lon bị biến dạng trước khi tiếp nhận'),
-  ('CONTAMINATED', 'Vật chứa còn chất lỏng hoặc bị bẩn')
+  ('CONTAMINATED', 'Vật chứa còn chất lỏng hoặc bị bẩn'),
+  ('SENSOR_REJECTED', 'Cảm biến không xác nhận vật phẩm hợp lệ')
 ON DUPLICATE KEY UPDATE description=VALUES(description);
 
 INSERT INTO alert_types(code, description, severity) VALUES

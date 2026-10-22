@@ -272,6 +272,8 @@ CREATE TABLE recycling_sessions (
                    NOT NULL DEFAULT 'WAITING_LOGIN',
     started_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     linked_at      DATETIME NULL,                    -- lúc khách quét QR thành công
+    last_activity_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- thao tác gần nhất, watchdog đóng phiên sau 5 phút
+    finish_requested_at DATETIME NULL,               -- kiosk yêu cầu kết thúc, controller dừng nhận chai mới
     confirmed_at   DATETIME NULL,                    -- lúc khách bấm OK trên màn hình
     completed_at   DATETIME NULL,
     CONSTRAINT fk_rs_deployment FOREIGN KEY (deployment_id) REFERENCES machine_deployments(deployment_id),
@@ -286,6 +288,8 @@ CREATE TABLE recycling_sessions (
 CREATE TABLE deposit_items (
     item_id           BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     session_id        BIGINT UNSIGNED NOT NULL,
+    idempotency_key   VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    request_hash      CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     rule_id           INT UNSIGNED NULL,
     reject_reason_id  TINYINT UNSIGNED NULL,
     scanned_barcode   VARCHAR(50) NULL,              -- giá trị đọc thô, kể cả mã chưa có trong hệ thống
@@ -298,6 +302,7 @@ CREATE TABLE deposit_items (
     CONSTRAINT fk_di_reject  FOREIGN KEY (reject_reason_id) REFERENCES reject_reasons(reject_reason_id),
     CONSTRAINT chk_di_outcome CHECK ((rule_id IS NULL) <> (reject_reason_id IS NULL)),
     CONSTRAINT chk_di_crush   CHECK (crushed_at IS NULL OR rule_id IS NOT NULL),
+    UNIQUE KEY uq_di_session_request (session_id, idempotency_key),
     INDEX idx_di_session (session_id),
     INDEX idx_di_time (deposited_at)
 ) ENGINE=InnoDB;

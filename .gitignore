@@ -3,6 +3,8 @@ node_modules/
 .venv/
 __pycache__/
 *.py[cod]
+# Keep this supplied CPython 3.10 prototype as a reference artifact; never run it in production.
+!deploy/pi/arduino-sorter/reference/test.cpython-310.pyc
 
 # Builds and coverage
 .next/

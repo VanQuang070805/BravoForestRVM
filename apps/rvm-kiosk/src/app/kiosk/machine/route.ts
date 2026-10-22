@@ -61,6 +61,34 @@ export async function POST(request: Request) {
       }));
     }
 
+    if (body.action === 'active-status') {
+      if (body.sessionId !== undefined && !validSessionId(body.sessionId)) {
+        return Response.json({ message: 'Phiên máy không hợp lệ.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      }
+      const query = body.sessionId ? `?sessionId=${encodeURIComponent(body.sessionId)}` : '';
+      return proxy(await machineRequest(`/machine/sessions/active/status${query}`));
+    }
+
+    if (body.action === 'finish') {
+      if (!validSessionId(body.sessionId)) {
+        return Response.json({ message: 'Phiên máy không hợp lệ.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      }
+      return proxy(await machineRequest(`/machine/sessions/${encodeURIComponent(body.sessionId)}/finish`, {
+        method: 'POST', body: '{}',
+      }));
+    }
+
+    if (body.action === 'continue' || body.action === 'logout' || body.action === 'activity') {
+      if (!validSessionId(body.sessionId) || typeof body.statusToken !== 'string' || !/^[a-f0-9]{64}$/i.test(body.statusToken)) {
+        return Response.json({ message: 'Phiên máy không hợp lệ.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
+      }
+      return proxy(await machineRequest(`/machine/sessions/${encodeURIComponent(body.sessionId)}/${body.action}`, {
+        method: 'POST',
+        headers: { 'x-session-token': body.statusToken },
+        body: '{}',
+      }));
+    }
+
     if (!validSessionId(body.sessionId) || typeof body.statusToken !== 'string' || !/^[a-f0-9]{64}$/i.test(body.statusToken)) {
       return Response.json({ message: 'Phiên máy không hợp lệ.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
     }

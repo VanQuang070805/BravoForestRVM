@@ -53,6 +53,14 @@ export class PointsService {
     return this.db.transaction(async (manager) => {
       const [wallet] = await manager.query('SELECT wallet_id,status FROM wallets WHERE user_id=? FOR UPDATE', [userId]);
       if (!wallet) throw new NotFoundException('Wallet not found');
+      if (status === 'FROZEN' && wallet.status !== 'FROZEN') {
+        const [activeSession] = await manager.query(
+          `SELECT session_id FROM recycling_sessions
+           WHERE user_id=? AND status IN ('DEPOSITING','PROCESSING') LIMIT 1`,
+          [userId],
+        );
+        if (activeSession) throw new ConflictException('Cannot freeze a wallet while its RVM session is active');
+      }
       if (wallet.status === status) return { ok: true, idempotent: true };
       await manager.query('UPDATE wallets SET status=? WHERE wallet_id=?', [status, wallet.wallet_id]);
       await manager.query(

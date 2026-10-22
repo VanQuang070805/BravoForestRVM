@@ -27,6 +27,7 @@ const PixelCard = dynamic(() => import('./react-bits/PixelCard'));
 const RvmMap = dynamic(() => import('./rvm-map').then((module) => module.RvmMap), { ssr: false });
 const CustomerQrScanner = dynamic(() => import('./CustomerQrScanner').then((module) => module.CustomerQrScanner), { ssr: false });
 const CustomerCashoutPanel = dynamic(() => import('./CustomerCashoutPanel').then((module) => module.CustomerCashoutPanel));
+const PENDING_RVM_SESSION_KEY = 'bravoforest-pending-rvm-session';
 import {
   ArrowRight,
   ArrowUpRight,
@@ -386,7 +387,7 @@ function UnifiedNavbar({
           }}
         >
           {/* Nút Quét QR - Chỉ hiển thị icon */}
-          <SpecularButton
+          {user && <SpecularButton
             size="sm"
             radius={9999}
             tint="#86efac"
@@ -410,7 +411,7 @@ function UnifiedNavbar({
             title="Quét QR đăng nhập máy RVM"
           >
             <Scan size={18} />
-          </SpecularButton>
+          </SpecularButton>}
 
           {user ? (
             <>
@@ -702,11 +703,19 @@ export function CustomerShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
+  const openQrScanner = () => {
+    if (!user) {
+      router.push('/login');
+      return;
+    }
+    setScannerOpen(true);
+  };
+
   useEffect(() => {
-    const handleOpenScanner = () => setScannerOpen(true);
+    const handleOpenScanner = () => openQrScanner();
     window.addEventListener('bravoforest:open-qr-scanner', handleOpenScanner);
     return () => window.removeEventListener('bravoforest:open-qr-scanner', handleOpenScanner);
-  }, []);
+  }, [user, router]);
 
   useEffect(() => {
     let active = true;
@@ -744,6 +753,42 @@ export function CustomerShell({ children }: { children: ReactNode }) {
     };
   }, [pathname]);
 
+  const currentUserId = String(val(user, 'id', 'user_id') ?? '');
+  useEffect(() => {
+    if (!currentUserId) return;
+    let stopped = false;
+    let checking = false;
+    const refreshCompletedDeposit = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const pending = JSON.parse(localStorage.getItem(PENDING_RVM_SESSION_KEY) ?? 'null') as {
+          sessionId?: string; userId?: string;
+        } | null;
+        if (!pending || pending.userId !== currentUserId || !/^\d{1,20}$/.test(pending.sessionId ?? '')) return;
+        const result = await apiGet<Row>(`/sessions/${encodeURIComponent(pending.sessionId!)}/status`);
+        if (stopped) return;
+        const status = String(result.status ?? '').toUpperCase();
+        if (status === 'COMPLETED') {
+          localStorage.removeItem(PENDING_RVM_SESSION_KEY);
+          window.dispatchEvent(new Event('bravoforest:wallet-updated'));
+        } else if (status === 'CANCELLED' || status === 'EXPIRED') {
+          localStorage.removeItem(PENDING_RVM_SESSION_KEY);
+        }
+      } catch {
+        // Keep pending state through temporary network errors; the next poll retries.
+      } finally {
+        checking = false;
+      }
+    };
+    void refreshCompletedDeposit();
+    const timer = window.setInterval(() => void refreshCompletedDeposit(), 5000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [currentUserId]);
+
   const logout = async () => {
     try {
       await apiPost('/auth/customer/logout', {});
@@ -762,7 +807,7 @@ export function CustomerShell({ children }: { children: ReactNode }) {
     <MotionConfig reducedMotion="user">
       <div className="customer-shell" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--obsidian)' }}>
         <div className="rvm-grain-overlay" aria-hidden="true" />
-        <UnifiedNavbar user={user} balance={balance} logout={logout} openScanner={() => setScannerOpen(true)} />
+        <UnifiedNavbar user={user} balance={balance} logout={logout} openScanner={openQrScanner} />
         <main style={{ flex: 1, width: '100%', paddingTop: isLanding ? 0 : 80 }}>
           <motion.div
             key={pathname}
@@ -1028,11 +1073,10 @@ function LandingProcessWorkflow() {
                 <span className="stepper-step-pill">Bước 02 · Kết nối</span>
                 <h3>Quét mã QR thành viên</h3>
                 <p>
-                  Mở ứng dụng hoặc mã thành viên BravoForest quét vào ô quét mã trên thân máy để liên kết phiên gửi vỏ chỉ trong 1 giây, hoặc nhập mã số định danh 6 số.
+                  Đăng nhập BravoForest trên điện thoại, mở tính năng quét QR và quét mã đang hiển thị trên màn hình máy RVM để liên kết phiên gửi với ví của bạn.
                 </p>
                 <div className="stepper-step-tags">
-                  <span className="stepper-tag">Mã QR trên app</span>
-                  <span className="stepper-tag">Nhập mã phiên 6 số</span>
+                  <span className="stepper-tag">Quét QR bằng tài khoản đã đăng nhập</span>
                   <span className="stepper-tag">Tự động liên kết ví</span>
                 </div>
               </div>
@@ -2209,10 +2253,6 @@ function Wallet() {
                 <Scan size={16} />
                 <span>Quét QR tại máy</span>
               </button>
-              <Link href="/machine-login" className="rvm-btn-secondary">
-                <span>Nhập mã phiên</span>
-                <ArrowRight size={16} />
-              </Link>
               <Link href="/rewards" className="rvm-btn-secondary">
                 <span>Đổi quà ngay</span>
                 <Gift size={16} />
@@ -3074,27 +3114,6 @@ function Profile() {
    ========================================================================= */
 
 function MachineLogin() {
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [tokenCode, setTokenCode] = useState('');
-
-  const submit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setError('');
-    setMessage('');
-    setBusy(true);
-    const token = new FormData(e.currentTarget).get('qrToken') || tokenCode;
-    try {
-      const data = await apiPost<Row>('/sessions/claim', { qrToken: token });
-      setMessage(`Đã liên kết phiên #${val(data, 'sessionId', 'session_id')} thành công.`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Không thể liên kết mã phiên tại máy.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div
       className="customer-page"
@@ -3150,32 +3169,13 @@ function MachineLogin() {
             LIÊN KẾT PHIÊN TẠI MÁY
           </span>
           <h1 className="font-display font-bold text-2xl text-[#112A1D] mb-3">
-            Nhập mã phiên Kiosk
+            Quét QR tại máy RVM
           </h1>
           <p className="font-ui text-sm text-[#456353] mb-6">
-            Nhập mã 6 ký tự hiển thị trên màn hình máy RVM để cộng điểm thưởng vào ví.
+            Đăng nhập tài khoản BravoForest rồi quét mã QR đang hiển thị trên màn hình máy để liên kết phiên gửi với ví của bạn.
           </p>
 
-          <form onSubmit={submit} style={{ display: 'grid', gap: 20 }}>
-            <div>
-              <label className="rvm-input-label text-left">MÃ PHIÊN 6 KÝ TỰ</label>
-              <input type="hidden" name="qrToken" value={tokenCode} />
-              <div style={{ display: 'flex', justifyContent: 'center', margin: '14px 0' }}>
-                <CodeSlots
-                  length={6}
-                  value={tokenCode}
-                  onChange={setTokenCode}
-                  autoFocus
-                  status={error ? 'error' : tokenCode.length === 6 ? 'success' : 'idle'}
-                />
-              </div>
-            </div>
-
-            <button disabled={busy} type="submit" className="rvm-btn-primary" style={{ width: '100%' }}>
-              <span>{busy ? 'Đang liên kết…' : 'Xác nhận phiên nạp'}</span>
-              <ArrowRight size={16} />
-            </button>
-
+          <div style={{ display: 'grid', gap: 14 }}>
             <button
               type="button"
               onClick={() => window.dispatchEvent(new Event('bravoforest:open-qr-scanner'))}
@@ -3183,22 +3183,12 @@ function MachineLogin() {
               style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             >
               <Scan size={16} />
-              <span>Bật camera quét mã QR trạm máy</span>
+              <span>Mở camera quét QR</span>
             </button>
-
-            {message && (
-              <div className="rvm-status-line" style={{ width: '100%', justifyContent: 'center' }}>
-                <Check size={16} />
-                <span>{message}</span>
-              </div>
-            )}
-            {error && (
-              <div className="rvm-status-line error" style={{ width: '100%', justifyContent: 'center' }}>
-                <AlertTriangle size={16} />
-                <span>{error}</span>
-              </div>
-            )}
-          </form>
+            <Link href="/wallet" className="rvm-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
+              Quay lại ví điểm
+            </Link>
+          </div>
         </div>
       </AnimatedContent>
     </div>

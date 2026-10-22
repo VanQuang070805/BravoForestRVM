@@ -13,4 +13,4 @@ Luồng xử lý:
 
 Các class hợp lệ được so khớp đúng tên, không dùng so khớp gần đúng.
 
-Đặt `CAMERA_ONLY=true` để thử camera và model mà không cần Arduino hay thông tin xác thực máy. Script `deploy/pi/start-camera-ai.sh` tự bật chế độ này và mở cửa sổ preview.
+`deploy/pi/start-camera-ai.sh` đọc `CAMERA_ONLY` và `AI_ONLY` từ `deploy/pi/.env`. `CAMERA_ONLY=true` chỉ xem camera/model và không ghi dữ liệu. `AI_ONLY=true` dùng AI camera làm nguồn quyết định, ghi nhận vật phẩm qua API mà không cần Arduino; script tự chuyển sang chế độ này khi thiếu Arduino và đã có cấu hình API. Nếu thiếu API hoặc rule ID, nó chỉ mở preview và không ghi giao dịch. Khi có Arduino, AI vẫn quyết định tính hợp lệ và ghi nhận item; Arduino chỉ chạy chu trình phân loại, kết quả phân loại không thay thế kết quả AI. Rule ID `0` làm vật liệu tương ứng bị AI từ chối.

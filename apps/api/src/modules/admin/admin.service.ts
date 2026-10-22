@@ -144,7 +144,7 @@ export class AdminService {
            (SELECT COALESCE(ROUND(AVG(b.balance),0), 0) FROM v_wallet_balance b) avg_wallet_balance,
            (SELECT COALESCE(SUM(points), 0) FROM wallet_transactions WHERE txn_type='EARN') total_points_distributed,
            (SELECT COUNT(*) FROM machines WHERE operational_status<>'DECOMMISSIONED') total_machines,
-           (SELECT COUNT(*) FROM v_machine_status WHERE connectivity='ONLINE' AND operational_status<>'DECOMMISSIONED') online_machines,
+           (SELECT COUNT(*) FROM machines WHERE last_heartbeat_at>=DATE_SUB(NOW(),INTERVAL 5 MINUTE) AND operational_status<>'DECOMMISSIONED') online_machines,
            (SELECT COUNT(*) FROM recycling_sessions WHERE DATE(started_at)=CURDATE()) sessions_today,
            (SELECT COUNT(*) FROM recycling_sessions WHERE status='COMPLETED') total_sessions,
            (SELECT COALESCE(SUM(points),0) FROM wallet_transactions WHERE txn_type='EARN' AND DATE(created_at)=CURDATE()) points_today,

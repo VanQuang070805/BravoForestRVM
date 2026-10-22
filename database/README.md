@@ -16,7 +16,7 @@ Sau khi import schema, có thể chạy `seed_reference_data.sql` để thêm da
 
 ## Cập nhật database đang có
 
-Với database đã chạy từ trước, áp dụng các file trong `database/migrations` theo thứ tự ngày và chỉ chạy mỗi migration một lần. Migration `20261019_add_cashout_feature.sql` thêm chức năng đổi điểm thành tiền; tính năng bắt đầu ở trạng thái tắt và chỉ mở sau khi admin cấu hình chính sách.
+Với database đã chạy từ trước, áp dụng các file trong `database/migrations` theo thứ tự ngày và chỉ chạy mỗi migration một lần. Migration `20261021_session_idle_watchdog_and_sensor_rejections.sql` cần chạy sau `20261021_harden_rvm_session_finalization.sql`; migration này bổ sung timeout hoạt động 5 phút và lý do từ chối do cảm biến. Migration `20261019_add_cashout_feature.sql` thêm chức năng đổi điểm thành tiền; tính năng bắt đầu ở trạng thái tắt và chỉ mở sau khi admin cấu hình chính sách.
 
 ## Import bằng phpMyAdmin
 

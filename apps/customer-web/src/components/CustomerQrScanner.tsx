@@ -22,6 +22,8 @@ interface CustomerQrScannerProps {
   onSuccess?: (sessionId: string) => void;
 }
 
+const PENDING_RVM_SESSION_KEY = 'bravoforest-pending-rvm-session';
+
 export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: CustomerQrScannerProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -36,8 +38,9 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
   const [processing, setProcessing] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
   const [claimError, setClaimError] = useState('');
+  const [scanAttempt, setScanAttempt] = useState(0);
 
-  // Extract clean token or code from raw QR payload
+  // Extract the QR token from supported QR payloads.
   const parseQrPayload = (raw: string): string => {
     const trimmed = raw.trim();
     try {
@@ -53,7 +56,7 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       try {
         const url = new URL(trimmed);
-        const t = url.searchParams.get('token') || url.searchParams.get('qrToken') || url.searchParams.get('code');
+        const t = url.searchParams.get('token') || url.searchParams.get('qrToken');
         if (t) return t;
       } catch {
         // invalid URL
@@ -65,6 +68,10 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
 
   // Perform claim with token
   const processToken = async (rawCode: string) => {
+    if (!user) {
+      setClaimError('Đăng nhập tài khoản khách hàng trước khi quét mã tại máy.');
+      return;
+    }
     const cleanToken = parseQrPayload(rawCode);
     if (!cleanToken) return;
     if (!/^[a-f0-9]{64}$/i.test(cleanToken)) {
@@ -86,12 +93,6 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
       }
     }
 
-    if (!user) {
-      setClaimError('Đăng nhập tài khoản khách hàng trước khi quét mã tại máy.');
-      setProcessing(false);
-      return;
-    }
-
     try {
       const response = await apiPost<{ sessionId?: string | number; session_id?: string | number; status?: string }>(
         '/sessions/claim',
@@ -99,7 +100,14 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
       );
       const sid = String(response?.sessionId || response?.session_id || 'thành công');
       setClaimSuccess(sid);
-      window.dispatchEvent(new Event('bravoforest:wallet-updated'));
+      if (/^\d{1,20}$/.test(sid)) {
+        try {
+          const userId = String(user?.id ?? user?.user_id ?? '');
+          localStorage.setItem(PENDING_RVM_SESSION_KEY, JSON.stringify({ sessionId: sid, userId }));
+        } catch {
+          // The claim succeeds even when this browser cannot persist the pending refresh marker.
+        }
+      }
       if (onSuccess) {
         onSuccess(sid);
       }
@@ -113,7 +121,7 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
 
   // Handle camera stream
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || !user) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -193,6 +201,9 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
               }
               if (rawValue) {
                 active = false;
+                setScanning(false);
+                streamRef.current?.getTracks().forEach((track) => track.stop());
+                streamRef.current = null;
                 void processToken(rawValue);
                 return;
               }
@@ -225,7 +236,7 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
       }
       setScanning(false);
     };
-  }, [isOpen, facingMode]);
+  }, [isOpen, facingMode, user, scanAttempt]);
 
   const toggleFacingMode = () => {
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
@@ -235,6 +246,7 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
     setDetectedToken(null);
     setClaimError('');
     setClaimSuccess(null);
+    setScanAttempt((attempt) => attempt + 1);
   };
 
   if (!isOpen) return null;
@@ -385,7 +397,26 @@ export function CustomerQrScanner({ isOpen, onClose, user, onSuccess }: Customer
         </div>
 
         {/* Content Stages */}
-        {claimSuccess ? (
+        {!user ? (
+          <div style={{ textAlign: 'center', width: '100%', padding: '24px 0 12px' }}>
+            <ShieldCheck size={34} color="#15803d" style={{ marginBottom: 12 }} />
+            <h3 style={{ fontSize: 17, fontWeight: 800, margin: '0 0 6px', color: '#112A1D' }}>
+              Đăng nhập để quét QR
+            </h3>
+            <p style={{ fontSize: 13, color: '#456353', margin: '0 0 18px', lineHeight: 1.55 }}>
+              Chỉ tài khoản khách hàng đã đăng nhập mới có thể liên kết máy và nhận điểm.
+            </p>
+            <button
+              type="button"
+              onClick={() => { onClose(); router.push('/login'); }}
+              className="rvm-btn-primary"
+              style={{ width: '100%', height: 44, fontSize: 13 }}
+            >
+              <span>Đăng nhập</span>
+              <ArrowRight size={15} />
+            </button>
+          </div>
+        ) : claimSuccess ? (
           /* SUCCESS STATE */
           <div style={{ textAlign: 'center', width: '100%', padding: '12px 0 6px' }}>
             <div
