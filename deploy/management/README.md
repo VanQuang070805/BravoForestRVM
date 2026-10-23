@@ -20,7 +20,13 @@ Giao diện RVM cổng `3002` không được khởi động bởi nhóm này.
 .\deploy\management\start.ps1
 ```
 
-Script sẽ khởi động Redis và bốn dịch vụ quản lý. Có thể chạy trực tiếp `npm run dev:management` nếu Redis đã hoạt động.
+Script tự khởi động MariaDB của XAMPP khi cần, khởi động Redis và chỉ mở các giao diện sau khi API, MariaDB và Redis đều sẵn sàng. Lần chạy đầu có thể hiện hộp thoại Administrator để mở riêng cổng API `4000` cho mạng LAN hiện tại. Những lần sau chỉ cần dùng một lệnh tại thư mục dự án:
+
+```powershell
+npm run dev
+```
+
+Lệnh này chạy API, worker, customer, admin và kiosk local. Pi tiếp tục chạy kiosk bằng Docker riêng và kết nối đến API qua mạng LAN.
 
 ## Kết nối Raspberry Pi
 

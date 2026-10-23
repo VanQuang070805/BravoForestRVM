@@ -16,7 +16,7 @@ export class MachineAuthGuard implements CanActivate {
     const timestamp = Number(request.headers['x-request-timestamp']);
     if (!Number.isInteger(machineId) || machineId < 1 || !apiKey || !/^[A-Za-z0-9_-]{16,128}$/.test(nonce)
       || !Number.isFinite(timestamp) || Math.abs(Date.now() - timestamp) > 300_000) {
-      throw new UnauthorizedException('Invalid machine authentication headers');
+      throw new UnauthorizedException('Thông tin xác thực máy không hợp lệ hoặc đã hết hạn.');
     }
 
     const keys = await this.db.query(
@@ -25,10 +25,10 @@ export class MachineAuthGuard implements CanActivate {
       [machineId],
     );
     const valid = await Promise.all(keys.map((row: any) => compare(apiKey, String(row.key_hash).replace(/^\$2y\$/, '$2b$'))));
-    if (!valid.some(Boolean)) throw new UnauthorizedException('Invalid machine key');
+    if (!valid.some(Boolean)) throw new UnauthorizedException('API key của máy không hợp lệ hoặc đã bị thu hồi.');
 
     const fresh = await this.redis.set(`machine-nonce:${machineId}:${nonce}`, '1', 'EX', 600, 'NX');
-    if (!fresh) throw new UnauthorizedException('Replayed machine request');
+    if (!fresh) throw new UnauthorizedException('Yêu cầu từ máy đã bị phát lại. Vui lòng thử lại.');
     request.machineId = machineId;
     return true;
   }

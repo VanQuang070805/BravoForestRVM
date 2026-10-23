@@ -127,254 +127,114 @@ export class AdminService {
 
   async overview() {
     const [
-      overviewRows,
       databaseDateRows,
+      customerStatsRows,
+      machineStatsRows,
+      binStatsRows,
       dailyActivity,
+      dailyPoints,
       dailySessions,
-      stationCoverage,
-      openAlerts,
-      consumerBehaviorRows,
-      pendingCashoutDetails,
-      highFillBins,
+      pendingCashoutRows,
     ] = await Promise.all([
-      this.db.query(
-        `SELECT
-           (SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id=u.role_id WHERE u.status='ACTIVE' AND u.deleted_at IS NULL AND r.role_name='CUSTOMER') total_users,
-           (SELECT COUNT(DISTINCT user_id) FROM recycling_sessions WHERE user_id IS NOT NULL) active_recyclers,
-           (SELECT COALESCE(ROUND(AVG(b.balance),0), 0) FROM v_wallet_balance b) avg_wallet_balance,
-           (SELECT COALESCE(SUM(points), 0) FROM wallet_transactions WHERE txn_type='EARN') total_points_distributed,
-           (SELECT COUNT(*) FROM machines WHERE operational_status<>'DECOMMISSIONED') total_machines,
-           (SELECT COUNT(*) FROM machines WHERE last_heartbeat_at>=DATE_SUB(NOW(),INTERVAL 5 MINUTE) AND operational_status<>'DECOMMISSIONED') online_machines,
-           (SELECT COUNT(*) FROM recycling_sessions WHERE DATE(started_at)=CURDATE()) sessions_today,
-           (SELECT COUNT(*) FROM recycling_sessions WHERE status='COMPLETED') total_sessions,
-           (SELECT COALESCE(SUM(points),0) FROM wallet_transactions WHERE txn_type='EARN' AND DATE(created_at)=CURDATE()) points_today,
-           (SELECT COUNT(*) FROM deposit_items WHERE crushed_at IS NOT NULL AND DATE(crushed_at)=CURDATE()) crushed_items_today,
-           (SELECT COUNT(*) FROM machine_locations WHERE is_active=TRUE) total_locations,
-           (SELECT COUNT(*) FROM machine_alerts WHERE resolved_at IS NULL) open_alerts,
-           (SELECT ROUND(AVG(bl.fill_percent),1) FROM v_bin_latest bl JOIN machine_bins b ON b.bin_id=bl.bin_id JOIN machines m ON m.machine_id=b.machine_id WHERE b.status='ACTIVE' AND m.operational_status<>'DECOMMISSIONED' AND bl.fill_percent IS NOT NULL) avg_bin_fill_percent,
-           (SELECT COUNT(*) FROM v_bin_latest bl JOIN machine_bins b ON b.bin_id=bl.bin_id JOIN machines m ON m.machine_id=b.machine_id WHERE b.status='ACTIVE' AND m.operational_status<>'DECOMMISSIONED' AND bl.fill_percent IS NOT NULL) bins_reporting,
-           (SELECT COUNT(*) FROM cashout_requests WHERE status='PENDING_REVIEW') pending_cashouts,
-           (SELECT COUNT(*) FROM machine_bins b JOIN v_bin_latest bl ON bl.bin_id=b.bin_id WHERE b.status='ACTIVE' AND bl.fill_percent>=85) full_bins,
-           (SELECT COUNT(*) FROM users WHERE status='LOCKED') locked_users,
-           (SELECT COUNT(*) FROM deposit_items WHERE crushed_at IS NOT NULL) total_bottles_collected,
-           (SELECT COUNT(*) FROM redemptions) total_redemptions,
-           (SELECT COALESCE(ROUND(AVG(item_count), 1), 0) FROM (SELECT session_id, COUNT(*) item_count FROM deposit_items GROUP BY session_id) s) avg_bottles_per_session,
-           (SELECT COALESCE(ROUND((COUNT(CASE WHEN rule_id IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) * 100, 1), 98.4) FROM deposit_items) acceptance_rate`,
-      ),
       this.db.query(`SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') today`),
       this.db.query(
+        `SELECT COUNT(*) total_users,
+                COALESCE(SUM(r.role_name='CUSTOMER' AND u.status='ACTIVE'),0) active_customers
+         FROM users u JOIN roles r ON r.role_id=u.role_id`,
+      ),
+      this.db.query(
+        `SELECT COUNT(*) total_machines,
+                COALESCE(SUM(operational_status='ACTIVE'),0) active_machines,
+                (SELECT COUNT(*) FROM machine_locations WHERE is_active=TRUE) total_locations
+         FROM machines`,
+      ),
+      this.db.query(
+        `SELECT COUNT(*) total_bins, COUNT(fill_percent) bins_reporting,
+                AVG(fill_percent) avg_bin_fill_percent,
+                COALESCE(SUM(fill_percent=100),0) full_bins
+         FROM v_bin_latest`,
+      ),
+      this.db.query(
         `SELECT DATE_FORMAT(day, '%Y-%m-%d') day,
-                SUM(accepted_items) accepted_items,
-                SUM(rejected_items) rejected_items,
-                SUM(points_issued) points_issued
+                SUM(accepted_items) accepted_items, SUM(rejected_items) rejected_items
          FROM v_machine_daily_stats
-         WHERE day BETWEEN CURDATE() - INTERVAL 20 DAY AND CURDATE()
+         WHERE day BETWEEN CURDATE() - INTERVAL 29 DAY AND CURDATE()
          GROUP BY day ORDER BY day`,
+      ),
+      this.db.query(
+        `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') day, SUM(points) points_issued
+         FROM wallet_transactions
+         WHERE txn_type='EARN'
+           AND created_at >= CURDATE() - INTERVAL 29 DAY
+           AND created_at < CURDATE() + INTERVAL 1 DAY
+         GROUP BY DATE(created_at) ORDER BY day`,
       ),
       this.db.query(
         `SELECT DATE_FORMAT(started_at, '%Y-%m-%d') day, COUNT(*) sessions_count
          FROM recycling_sessions
-         WHERE started_at >= CURDATE() - INTERVAL 20 DAY
+         WHERE started_at >= CURDATE() - INTERVAL 29 DAY
+           AND started_at < CURDATE() + INTERVAL 1 DAY
          GROUP BY DATE(started_at)
          ORDER BY day`,
       ),
       this.db.query(
-        `SELECT m.machine_id,m.machine_code,COALESCE(vs.location_name,'Chưa gán địa điểm') location_name,
-                vs.city,vs.connectivity,vs.operational_status,vs.open_alerts,
-                ROUND(AVG(bl.fill_percent),1) avg_fill_percent,
-                COUNT(DISTINCT b.bin_id) active_bins,
-                COUNT(DISTINCT CASE WHEN bl.fill_percent IS NOT NULL THEN bl.bin_id END) reporting_bins
-         FROM v_machine_status vs
-         JOIN machines m ON m.machine_id=vs.machine_id
-         LEFT JOIN machine_bins b ON b.machine_id=m.machine_id AND b.status='ACTIVE'
-         LEFT JOIN v_bin_latest bl ON bl.bin_id=b.bin_id
-         WHERE vs.operational_status<>'DECOMMISSIONED'
-         GROUP BY m.machine_id,m.machine_code,vs.location_name,vs.city,vs.connectivity,vs.operational_status,vs.open_alerts
-         ORDER BY vs.open_alerts DESC,avg_fill_percent DESC,m.machine_code LIMIT 8`,
-      ),
-      this.db.query(
-        `SELECT a.alert_id,m.machine_code,COALESCE(ml.name,'Chưa gán địa điểm') location_name,
-                t.severity,t.code,a.message,a.created_at
-         FROM machine_alerts a
-         JOIN machines m ON m.machine_id=a.machine_id
-         JOIN alert_types t ON t.alert_type_id=a.alert_type_id
-         LEFT JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
-         LEFT JOIN machine_locations ml ON ml.location_id=md.location_id
-         WHERE a.resolved_at IS NULL
-         ORDER BY FIELD(t.severity,'CRITICAL','WARNING','INFO'),a.created_at DESC LIMIT 7`,
-      ),
-      this.db.query(
-        `SELECT
-           (SELECT SUM(CASE WHEN HOUR(started_at) BETWEEN 11 AND 13 THEN 1 ELSE 0 END) FROM recycling_sessions) lunch_sessions,
-           (SELECT SUM(CASE WHEN HOUR(started_at) BETWEEN 17 AND 19 THEN 1 ELSE 0 END) FROM recycling_sessions) evening_sessions,
-           (SELECT SUM(CASE WHEN HOUR(started_at) NOT BETWEEN 11 AND 13 AND HOUR(started_at) NOT BETWEEN 17 AND 19 THEN 1 ELSE 0 END) FROM recycling_sessions) other_sessions,
-           (SELECT COUNT(*) FROM recycling_sessions) total_sessions,
-           (SELECT COALESCE(MIN(cnt), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s1) min_bottles,
-           (SELECT COALESCE(MAX(cnt), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s2) max_bottles,
-           (SELECT COALESCE(ROUND(AVG(cnt), 1), 0) FROM (SELECT session_id, COUNT(*) cnt FROM deposit_items GROUP BY session_id) s3) avg_bottles,
-           (SELECT COUNT(DISTINCT user_id) FROM recycling_sessions WHERE user_id IS NOT NULL) total_users_with_sessions,
-           (SELECT SUM(CASE WHEN sess_cnt > 1 THEN 1 ELSE 0 END) FROM (SELECT user_id, COUNT(*) sess_cnt FROM recycling_sessions WHERE user_id IS NOT NULL GROUP BY user_id) u) repeat_users,
-           (SELECT COUNT(*) FROM redemptions WHERE status<>'FAILED') voucher_redemptions,
-           (SELECT COUNT(*) FROM cashout_requests WHERE status<>'REJECTED') cashout_count`,
-      ),
-      this.db.query(
-        `SELECT r.cashout_id, r.amount_vnd, r.points, r.bank_name, r.account_last4, r.created_at, u.full_name
-         FROM cashout_requests r
-         JOIN users u ON u.user_id=r.user_id
-         WHERE r.status='PENDING_REVIEW'
-         ORDER BY r.created_at ASC
-         LIMIT 3`,
-      ),
-      this.db.query(
-        `SELECT b.bin_id, m.machine_code, COALESCE(ml.name, 'Chưa gán địa điểm') location_name, bl.fill_percent
-         FROM machine_bins b
-         JOIN machines m ON m.machine_id=b.machine_id
-         LEFT JOIN machine_deployments md ON md.machine_id=m.machine_id AND md.removed_at IS NULL
-         LEFT JOIN machine_locations ml ON ml.location_id=md.location_id
-         JOIN v_bin_latest bl ON bl.bin_id=b.bin_id
-         WHERE b.status='ACTIVE' AND bl.fill_percent >= 80
-         ORDER BY bl.fill_percent DESC
-         LIMIT 3`,
+        `SELECT COUNT(*) pending_cashouts
+         FROM cashout_requests WHERE status='PENDING_REVIEW'`,
       ),
     ]);
 
-    const today = String(databaseDateRows[0]?.today ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const today = String(databaseDateRows[0]?.today ?? '').slice(0, 10);
+    if (!today) throw new Error('Database date query returned no value');
+    const customerStats = customerStatsRows[0] ?? {};
+    const machineStats = machineStatsRows[0] ?? {};
+    const binStats = binStatsRows[0] ?? {};
     const activityByDay = new Map(dailyActivity.map((row: Record<string, unknown>) => [String(row.day).slice(0, 10), row]));
+    const pointsByDay = new Map(dailyPoints.map((row: Record<string, unknown>) => [String(row.day).slice(0, 10), Number(row.points_issued ?? 0)]));
     const sessionsByDay = new Map(dailySessions.map((row: Record<string, unknown>) => [String(row.day).slice(0, 10), Number(row.sessions_count ?? 0)]));
 
-    const daily = Array.from({ length: 21 }, (_, index) => {
-      const date = new Date(`${today}T00:00:00Z`);
-      date.setUTCDate(date.getUTCDate() - 20 + index);
+    const daily = Array.from({ length: 30 }, (_, index) => {
+      const date = new Date(today + 'T00:00:00Z');
+      date.setUTCDate(date.getUTCDate() - 29 + index);
       const day = date.toISOString().slice(0, 10);
       const row = activityByDay.get(day) as Record<string, unknown> | undefined;
-      const accepted = Number(row?.accepted_items ?? 0);
       return {
         day,
-        accepted_items: accepted,
+        accepted_items: Number(row?.accepted_items ?? 0),
         rejected_items: Number(row?.rejected_items ?? 0),
-        points_issued: Number(row?.points_issued ?? 0),
-        sessions_count: sessionsByDay.get(day) ?? (accepted > 0 ? Math.max(1, Math.round(accepted / 13.2)) : 0),
+        points_issued: pointsByDay.get(day) ?? 0,
+        sessions_count: sessionsByDay.get(day) ?? 0,
       };
     });
-    const row = overviewRows[0] ?? {};
 
-    // Calculate Consumer Behavior metrics
-    const cb = consumerBehaviorRows[0] ?? {};
-    const totalSessions = Number(cb.total_sessions || 0);
-    const lunchSessions = Number(cb.lunch_sessions || 0);
-    const eveningSessions = Number(cb.evening_sessions || 0);
-    const otherSessions = Number(cb.other_sessions || 0);
-
-    const lunchPct = totalSessions > 0 ? Math.round((lunchSessions / totalSessions) * 100) : 50;
-    const eveningPct = totalSessions > 0 ? Math.round((eveningSessions / totalSessions) * 100) : 50;
-    const otherPct = Math.max(0, 100 - lunchPct - eveningPct);
-
-    const voucherCount = Number(cb.voucher_redemptions || 0);
-    const cashoutCount = Number(cb.cashout_count || 0);
-    const totalRedemptions = voucherCount + cashoutCount;
-    const voucherPct = totalRedemptions > 0 ? Math.round((voucherCount / totalRedemptions) * 100) : 0;
-    const cashoutPct = totalRedemptions > 0 ? 100 - voucherPct : 100;
-
-    const totalRecyclers = Number(cb.total_users_with_sessions || 0);
-    const repeatRecyclers = Number(cb.repeat_users || 0);
-    const retentionRate = totalRecyclers > 0 ? Math.round((repeatRecyclers / totalRecyclers) * 100) : 100;
-
-    const consumerBehavior = {
-      peak_hours: {
-        lunch_pct: lunchPct,
-        evening_pct: eveningPct,
-        other_pct: otherPct,
-        lunch_sessions: lunchSessions,
-        evening_sessions: eveningSessions,
-        summary: `${lunchPct + eveningPct}% tập trung 2 khung giờ trưa & tan tầm`,
-      },
-      redemption_split: {
-        voucher_pct: voucherPct,
-        cashout_pct: cashoutPct,
-        voucher_count: voucherCount,
-        cashout_count: cashoutCount,
-        total_points: Number(row.total_points_distributed || 0),
-      },
-      session_volume: {
-        min_bottles: Number(cb.min_bottles || 1),
-        max_bottles: Number(cb.max_bottles || 18),
-        avg_bottles: Number(cb.avg_bottles || 13.2),
-        summary: `${Number(cb.min_bottles || 1)} - ${Number(cb.max_bottles || 18)} chai`,
-      },
-      retention: {
-        retention_rate: retentionRate,
-        repeat_users: repeatRecyclers,
-        total_users: totalRecyclers,
-        summary: `${retentionRate}% người dùng quay lại`,
-      },
-    };
-
-    // Build real Action Queue from actual database rows
-    const actionQueue = [
-      {
-        id: 0,
-        type: 'cashout',
-        title: `${Number(row.pending_cashouts ?? 0)} yêu cầu đổi tiền mặt chờ duyệt (${pendingCashoutDetails[0] ? Number(pendingCashoutDetails[0].amount_vnd).toLocaleString('vi-VN') + ' VNĐ' : '0 VNĐ'})`,
-        sub: pendingCashoutDetails[0]
-          ? `Người dùng ${pendingCashoutDetails[0].full_name} · Ngân hàng ${pendingCashoutDetails[0].bank_name} (Đuôi tài khoản: ${pendingCashoutDetails[0].account_last4})`
-          : 'Hiện không có yêu cầu đổi tiền mặt chờ duyệt',
-        btn: 'Duyệt',
-        route: '/cashouts',
-      },
-      {
-        id: 1,
-        type: 'alert',
-        title: `${Number(row.open_alerts ?? 0)} sự cố kỹ thuật RVM tại các trạm`,
-        sub: openAlerts.length > 0
-          ? openAlerts.slice(0, 2).map((a: any) => `${a.machine_code}: ${a.message || a.code}`).join(' & ')
-          : 'Hệ thống thiết bị vận hành ổn định',
-        btn: 'Xem lỗi',
-        route: '/machines',
-      },
-      {
-        id: 2,
-        type: 'bin',
-        title: highFillBins.length > 0
-          ? `${highFillBins.length} thùng nén rPET đạt ≥80% sức chứa (${highFillBins[0].machine_code} - ${highFillBins[0].fill_percent}%)`
-          : 'Tất cả thùng rPET đang ở mức an toàn (<80%)',
-        sub: highFillBins.length > 0
-          ? `Trạm ${highFillBins[0].location_name} · Điều phối thu gom rPET`
-          : 'Chưa cần điều phối xe thu gom',
-        btn: 'Xử lý',
-        route: '/machines',
-      },
-      {
-        id: 3,
-        type: 'session',
-        title: `${Number(row.sessions_today ?? 0)} phiên trả vỏ hôm nay (+${Number(row.crushed_items_today ?? 0)} vỏ)`,
-        sub: `Khung giờ cao điểm: ${lunchPct}% buổi trưa (11h-13h) và ${eveningPct}% tan tầm (17h-19h)`,
-        btn: 'Chi tiết',
-        route: '/sessions',
-      },
-    ];
+    const todayActivity = daily.find((row) => row.day === today);
+    const sessionsToday = Number(sessionsByDay.get(today) ?? 0);
+    const acceptedToday = todayActivity?.accepted_items ?? 0;
+    const rejectedToday = todayActivity?.rejected_items ?? 0;
+    const totalScannedToday = acceptedToday + rejectedToday;
 
     return {
-      ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? null : Number(value)])),
       today,
+      active_customers: Number(customerStats.active_customers ?? 0),
+      total_users: Number(customerStats.total_users ?? 0),
+      active_machines: Number(machineStats.active_machines ?? 0),
+      total_machines: Number(machineStats.total_machines ?? 0),
+      total_locations: Number(machineStats.total_locations ?? 0),
+      total_bins: Number(binStats.total_bins ?? 0),
+      bins_reporting: Number(binStats.bins_reporting ?? 0),
+      avg_bin_fill_percent: binStats.avg_bin_fill_percent === null || binStats.avg_bin_fill_percent === undefined
+        ? null
+        : Number(binStats.avg_bin_fill_percent),
+      full_bins: Number(binStats.full_bins ?? 0),
+      accepted_items_today: acceptedToday,
+      rejected_items_today: rejectedToday,
+      sessions_today: sessionsToday,
+      avg_bottles_per_session: sessionsToday > 0 ? acceptedToday / sessionsToday : null,
+      acceptance_rate: totalScannedToday > 0 ? (acceptedToday / totalScannedToday) * 100 : null,
+      points_issued_today: pointsByDay.get(today) ?? 0,
+      pending_cashouts: Number(pendingCashoutRows[0]?.pending_cashouts ?? 0),
       daily_activity: daily,
-      consumer_behavior: consumerBehavior,
-      action_queue: actionQueue,
-      station_coverage: stationCoverage.map((station: Record<string, unknown>) => ({
-        machine_id: Number(station.machine_id),
-        machine_code: station.machine_code,
-        location_name: station.location_name,
-        city: station.city,
-        connectivity: station.connectivity,
-        operational_status: station.operational_status,
-        open_alerts: Number(station.open_alerts ?? 0),
-        avg_fill_percent: station.avg_fill_percent == null ? null : Number(station.avg_fill_percent),
-        active_bins: Number(station.active_bins ?? 0),
-        reporting_bins: Number(station.reporting_bins ?? 0),
-      })),
-      recent_alerts: openAlerts,
     };
   }
-
   alerts(search = '', status = '', page = '1', pageSize = '20') {
     if (status && !['OPEN', 'RESOLVED'].includes(status)) throw new BadRequestException('Invalid alert status');
     const paging = pageOptions(page, pageSize);

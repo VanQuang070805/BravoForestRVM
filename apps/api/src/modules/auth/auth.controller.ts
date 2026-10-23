@@ -25,9 +25,12 @@ export class AuthController {
   }
 
   private setRefreshCookie(response: Response, token: string, audience: AuthAudience) {
+    const maxAge = Number(process.env.JWT_REFRESH_TTL_SECONDS ?? 2_592_000) * 1000;
     response.cookie(this.cookieName(audience), token, {
       ...this.cookieOptions(),
-      maxAge: Number(process.env.JWT_REFRESH_TTL_SECONDS ?? 2_592_000) * 1000,
+      // Customer sessions end when the browser session closes. Admin sessions
+      // keep the configured refresh lifetime so this change stays customer-only.
+      ...(audience === 'admin' ? { maxAge } : {}),
     });
     response.clearCookie('refresh_token', this.cookieOptions());
   }

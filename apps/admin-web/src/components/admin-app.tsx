@@ -537,214 +537,67 @@ function Login() {
    ========================================================================= */
 
 function Dashboard() {
-  const router = useRouter();
   const overview = useApi<Row>('/admin/dashboard/overview');
   const stats = overview.data ?? {};
   const [dateRange, setDateRange] = useState('21d');
   const [chartMetric, setChartMetric] = useState<'supply' | 'sessions' | 'points'>('supply');
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
-  const [stationFilter, setStationFilter] = useState<'all' | 'online' | 'high_fill' | 'alert'>('all');
-  const [rightPanelTab, setRightPanelTab] = useState<'behavior' | 'queue'>('behavior');
-  const [clearedActions, setClearedActions] = useState<Record<number, boolean>>({});
 
   const number = (value: unknown) => Number(value ?? 0).toLocaleString('vi-VN');
 
-  const toggleAction = (idx: number) => {
-    setClearedActions((prev) => ({ ...prev, [idx]: !prev[idx] }));
-  };
-
   const rawDaily = Array.isArray(stats.daily_activity) ? (stats.daily_activity as Row[]) : [];
-  const demandMix = rawDaily.length === 21
-    ? rawDaily.map((item, idx) => {
-        const supply = Number(item.accepted_items ?? 0);
-        const forecast = supply > 0 ? Math.round(supply * (0.88 + ((idx % 5) * 0.05))) : 45 + (idx % 7) * 12;
-        const sessions = Number(item.sessions_count ?? (supply > 0 ? Math.max(1, Math.round(supply / 13.2)) : 0));
-        const points = Number(item.points_issued ?? (supply * 10));
-        return {
-          day: idx + 1,
-          dateLabel: idx === 20 ? 'Hôm nay' : (item.day ? String(item.day).slice(5).replace('-', '/') : `D${idx + 1}`),
-          fullDate: item.day ? String(item.day) : `Ngày ${idx + 1}`,
-          supply: supply > 0 ? supply : (idx === 20 ? Number(stats.crushed_items_today ?? 206) : 45),
-          forecast: forecast > 0 ? forecast : 50,
-          sessions,
-          points
-        };
-      })
-    : [
-        { day: 1, dateLabel: '01/10', fullDate: '2026-10-01', supply: 65, forecast: 70, sessions: 5, points: 650 },
-        { day: 2, dateLabel: '02/10', fullDate: '2026-10-02', supply: 80, forecast: 75, sessions: 6, points: 800 },
-        { day: 3, dateLabel: '03/10', fullDate: '2026-10-03', supply: 95, forecast: 90, sessions: 7, points: 950 },
-        { day: 4, dateLabel: '04/10', fullDate: '2026-10-04', supply: 120, forecast: 110, sessions: 9, points: 1200 },
-        { day: 5, dateLabel: '05/10', fullDate: '2026-10-05', supply: 140, forecast: 135, sessions: 11, points: 1400 },
-        { day: 6, dateLabel: '06/10', fullDate: '2026-10-06', supply: 160, forecast: 150, sessions: 12, points: 1600 },
-        { day: 7, dateLabel: '07/10', fullDate: '2026-10-07', supply: 175, forecast: 180, sessions: 13, points: 1750 },
-        { day: 8, dateLabel: '08/10', fullDate: '2026-10-08', supply: 150, forecast: 145, sessions: 11, points: 1500 },
-        { day: 9, dateLabel: '09/10', fullDate: '2026-10-09', supply: 130, forecast: 125, sessions: 10, points: 1300 },
-        { day: 10, dateLabel: '10/10', fullDate: '2026-10-10', supply: 110, forecast: 115, sessions: 8, points: 1100 },
-        { day: 11, dateLabel: '11/10', fullDate: '2026-10-11', supply: 90, forecast: 95, sessions: 7, points: 900 },
-        { day: 12, dateLabel: '12/10', fullDate: '2026-10-12', supply: 105, forecast: 100, sessions: 8, points: 1050 },
-        { day: 13, dateLabel: '13/10', fullDate: '2026-10-13', supply: 135, forecast: 130, sessions: 10, points: 1350 },
-        { day: 14, dateLabel: '14/10', fullDate: '2026-10-14', supply: 165, forecast: 160, sessions: 12, points: 1650 },
-        { day: 15, dateLabel: '15/10', fullDate: '2026-10-15', supply: 185, forecast: 180, sessions: 14, points: 1850 },
-        { day: 16, dateLabel: '16/10', fullDate: '2026-10-16', supply: 170, forecast: 175, sessions: 13, points: 1700 },
-        { day: 17, dateLabel: '17/10', fullDate: '2026-10-17', supply: 145, forecast: 150, sessions: 11, points: 1450 },
-        { day: 18, dateLabel: '18/10', fullDate: '2026-10-18', supply: 160, forecast: 155, sessions: 12, points: 1600 },
-        { day: 19, dateLabel: '19/10', fullDate: '2026-10-19', supply: 175, forecast: 165, sessions: 13, points: 1750 },
-        { day: 20, dateLabel: '20/10', fullDate: '2026-10-20', supply: 190, forecast: 180, sessions: 14, points: 1900 },
-        { day: 21, dateLabel: 'Hôm nay', fullDate: 'Hôm nay', supply: Number(stats.crushed_items_today ?? 206), forecast: 109, sessions: Number(stats.sessions_today ?? 16), points: Number(stats.points_today ?? 2060) }
-      ];
+  const demandMix = rawDaily.map((item) => {
+    const day = String(item.day ?? '');
+    return {
+      day,
+      dateLabel: day === String(stats.today ?? '') ? 'Hôm nay' : day.slice(5).replace('-', '/'),
+      fullDate: day,
+      supply: Number(item.accepted_items ?? 0),
+      rejected: Number(item.rejected_items ?? 0),
+      sessions: Number(item.sessions_count ?? 0),
+      points: Number(item.points_issued ?? 0)
+    };
+  });
+  const filteredDemandMix = dateRange === 'today'
+    ? demandMix.filter((item) => item.day === String(stats.today ?? ''))
+    : dateRange === '7d'
+      ? demandMix.slice(-7)
+      : dateRange === '30d'
+        ? demandMix.slice(-30)
+        : demandMix.slice(-21);
 
-  const filteredDemandMix = dateRange === '7d' ? demandMix.slice(-7) : dateRange === 'today' ? demandMix.slice(-1) : demandMix;
-
-  const getMetricValue = (d: typeof demandMix[0]) => {
+  const getMetricValue = (d: typeof demandMix[number]) => {
     if (chartMetric === 'sessions') return d.sessions;
     if (chartMetric === 'points') return d.points;
     return d.supply;
   };
 
-  const getMetricTarget = (d: typeof demandMix[0]) => {
-    if (chartMetric === 'sessions') return Math.max(1, Math.round(d.forecast / 13.2));
-    if (chartMetric === 'points') return d.forecast * 10;
-    return d.forecast;
-  };
-
-  const maxVal = Math.max(...filteredDemandMix.map((d) => Math.max(getMetricValue(d), getMetricTarget(d))), 1);
-  const totalSupply = filteredDemandMix.reduce((acc, d) => acc + getMetricValue(d), 0);
-  const totalForecast = filteredDemandMix.reduce((acc, d) => acc + getMetricTarget(d), 0);
-  const diffSupply = totalSupply - totalForecast;
+  const maxVal = Math.max(...filteredDemandMix.map(getMetricValue), 1);
+  const totalMetric = filteredDemandMix.reduce((acc, d) => acc + getMetricValue(d), 0);
+  const hasActivity = filteredDemandMix.some((item) => item.supply > 0 || item.sessions > 0 || item.points > 0);
+  const chartPoints = filteredDemandMix.map((item, index) => {
+    const x = filteredDemandMix.length <= 1 ? 500 : 48 + (index * 904) / (filteredDemandMix.length - 1);
+    const y = 178 - (getMetricValue(item) / maxVal) * 144;
+    return { ...item, index, x, y, value: getMetricValue(item) };
+  });
+  const xLabelStep = Math.max(1, Math.ceil(filteredDemandMix.length / 6));
+  const dataReady = Boolean(overview.data);
+  const metricValue = (value: unknown) => value === null || value === undefined ? '—' : number(value);
 
   const handleExport = () => {
     const csvContent =
       'data:text/csv;charset=utf-8,' +
-      'Ngay,SoLuongThuGom,ChiTieuDuBao,SoPhien,DiemDaCap\n' +
-      filteredDemandMix.map((d) => `${d.fullDate},${d.supply},${d.forecast},${d.sessions},${d.points}`).join('\n');
+      'Ngay,SoVoChaiChapNhan,SoPhien,DiemDaCap\n' +
+      filteredDemandMix.map((d) => String(d.fullDate) + ',' + d.supply + ',' + d.sessions + ',' + d.points).join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `BravoForest_PowerBI_Operations_${dateRange}.csv`);
+    link.setAttribute('download', 'BravoForest_Operations_' + dateRange + '.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const rawStations = (Array.isArray(stats.station_coverage) && (stats.station_coverage as Row[]).length > 0)
-    ? (stats.station_coverage as Row[])
-    : [
-        { machine_id: 1, machine_code: 'RVM-01', location_name: 'ĐH Bách Khoa HCM - Cơ sở 2', city: 'TP. Hồ Chí Minh', connectivity: 'ONLINE', operational_status: 'ACTIVE', open_alerts: 0, avg_fill_percent: 64, active_bins: 1, reporting_bins: 1 },
-        { machine_id: 2, machine_code: 'RVM-02', location_name: 'AEON Mall Bình Tân', city: 'TP. Hồ Chí Minh', connectivity: 'ONLINE', operational_status: 'ACTIVE', open_alerts: 1, avg_fill_percent: 81, active_bins: 1, reporting_bins: 1 },
-        { machine_id: 3, machine_code: 'RVM-03', location_name: 'Vincom Mega Mall Thảo Điền', city: 'TP. Hồ Chí Minh', connectivity: 'OFFLINE', operational_status: 'MAINTENANCE', open_alerts: 2, avg_fill_percent: 92, active_bins: 1, reporting_bins: 1 },
-        { machine_id: 4, machine_code: 'RVM-04', location_name: 'ĐH Sư Phạm Kỹ Thuật (HCMUTE)', city: 'TP. Hồ Chí Minh', connectivity: 'ONLINE', operational_status: 'ACTIVE', open_alerts: 0, avg_fill_percent: 48, active_bins: 1, reporting_bins: 1 }
-      ];
-
-  const filteredStations = rawStations.filter((st) => {
-    if (stationFilter === 'online') return String(st.connectivity).toUpperCase() === 'ONLINE';
-    if (stationFilter === 'high_fill') return Number(st.avg_fill_percent ?? 0) >= 80;
-    if (stationFilter === 'alert') return Number(st.open_alerts ?? 0) > 0;
-    return true;
-  });
-
-  const cb = (stats.consumer_behavior as {
-    peak_hours?: { lunch_pct?: number; evening_pct?: number; other_pct?: number; lunch_sessions?: number; evening_sessions?: number; summary?: string };
-    redemption_split?: { voucher_pct?: number; cashout_pct?: number; voucher_count?: number; cashout_count?: number; total_points?: number };
-    session_volume?: { min_bottles?: number; max_bottles?: number; avg_bottles?: number; summary?: string };
-    retention?: { retention_rate?: number; repeat_users?: number; total_users?: number; summary?: string };
-  }) ?? {};
-
-  const lunchPct = Number(cb?.peak_hours?.lunch_pct ?? 50);
-  const eveningPct = Number(cb?.peak_hours?.evening_pct ?? 50);
-  const otherPct = Number(cb?.peak_hours?.other_pct ?? 0);
-  const lunchSessions = Number(cb?.peak_hours?.lunch_sessions ?? 97);
-  const eveningSessions = Number(cb?.peak_hours?.evening_sessions ?? 97);
-
-  const voucherPct = Number(cb?.redemption_split?.voucher_pct ?? 0);
-  const cashoutPct = Number(cb?.redemption_split?.cashout_pct ?? 100);
-  const voucherCount = Number(cb?.redemption_split?.voucher_count ?? 0);
-  const cashoutCount = Number(cb?.redemption_split?.cashout_count ?? 1);
-
-  const rawActionQueue = Array.isArray(stats.action_queue) ? (stats.action_queue as Row[]) : [];
-  const actionQueueItems = rawActionQueue.length > 0
-    ? rawActionQueue.map((item, idx) => ({
-        id: idx,
-        title: String(item.title),
-        sub: String(item.sub),
-        btn: String(item.btn || 'Xem'),
-        route: String(item.route || '/dashboard'),
-        icon: item.type === 'cashout' ? (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-            <path d="M12 18V6" />
-          </svg>
-        ) : item.type === 'alert' ? (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-            <path d="M12 9v4M12 17h.01" />
-          </svg>
-        ) : item.type === 'bin' ? (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
-        ) : (
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-          </svg>
-        )
-      }))
-    : [
-        {
-          id: 0,
-          title: `${Number(stats.pending_cashouts ?? 1)} yêu cầu đổi tiền mặt chờ duyệt (50.000 VNĐ)`,
-          sub: 'Người dùng Văn Quang · Ngân hàng Vietcombank (Đuôi tài khoản: 2736)',
-          btn: 'Duyệt',
-          route: '/cashouts',
-          icon: (
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-              <path d="M12 18V6" />
-            </svg>
-          )
-        },
-        {
-          id: 1,
-          title: `${Number(stats.open_alerts ?? 3)} cảnh báo kỹ thuật RVM tại 2 trạm`,
-          sub: 'Cảm biến buồng quét lệch tâm (RVM-03) & Thùng 81% (RVM-02)',
-          btn: 'Xem lỗi',
-          route: '/machines',
-          icon: (
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-              <path d="M12 9v4M12 17h.01" />
-            </svg>
-          )
-        },
-        {
-          id: 2,
-          title: `2 thùng nén rPET đạt ≥80% sức chứa (Trạm Vincom Mega Mall 92%)`,
-          sub: 'Điều phối nhân sự dọn thùng và nén gọn rPET theo lộ trình',
-          btn: 'Xử lý',
-          route: '/machines',
-          icon: (
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-            </svg>
-          )
-        },
-        {
-          id: 3,
-          title: `${number(stats.sessions_today ?? 16)} phiên trả vỏ hôm nay (+206 vỏ)`,
-          sub: 'Nhật ký telemetry người dùng đạt đỉnh lúc 11h-13h và 17h-19h',
-          btn: 'Chi tiết',
-          route: '/sessions',
-          icon: (
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-            </svg>
-          )
-        }
-      ];
-
-  const clearedCount = Object.values(clearedActions).filter(Boolean).length;
   const font = "var(--font-ui, 'Be Vietnam Pro', 'Inter', -apple-system, sans-serif)";
 
   return (
@@ -835,620 +688,94 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* =================================================================
-            2. TOP KPI ROW (5 COLUMNS TARGETING: CONSUMER, RVM, BEHAVIOR)
-            ================================================================= */}
-        <div
-          style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: 16,
-            padding: '20px 24px',
-            marginBottom: 20,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-            gap: 20,
-            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)'
-          }}
-        >
-          {/* Card 1: Khách hàng tuần hoàn (Consumers) */}
+        {(overview.loading || overview.error) && (
           <div
-            onClick={() => router.push('/users')}
-            style={{ cursor: 'pointer', transition: 'transform 0.15s ease' }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-            title="Bấm để xem danh sách người dùng"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-              <span>Khách hàng tuần hoàn</span>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.1, margin: '8px 0 6px' }}>
-              {number(stats.active_recyclers || stats.total_users || 2)}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <span style={{ color: '#94a3b8' }}>{number(stats.total_users || 2)} tài khoản</span>
-              <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 11.5, background: '#f0fdf4', padding: '1px 6px', borderRadius: 4, border: '1px solid #dcfce7' }}>
-                100% tích cực
-              </span>
-            </div>
-          </div>
-
-          {/* Card 2: Mạng lưới trạm máy RVM (RVM Machines) */}
-          <div
-            onClick={() => router.push('/machines')}
-            style={{ cursor: 'pointer', transition: 'transform 0.15s ease' }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-            title="Bấm để xem danh sách trạm máy RVM"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect width="20" height="16" x="2" y="4" rx="2" />
-                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-              </svg>
-              <span>Trạm máy RVM Cloud</span>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.1, margin: '8px 0 6px' }}>
-              {stats.online_machines ?? 3}/{stats.total_machines ?? 4}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <span style={{ color: '#94a3b8' }}>{stats.total_locations ?? 4} điểm đặt</span>
-              <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 11.5, background: '#f0fdf4', padding: '1px 6px', borderRadius: 4, border: '1px solid #dcfce7' }}>
-                {Number(stats.total_machines ?? 4) > 0 ? `${Math.round((Number(stats.online_machines ?? 3) / Number(stats.total_machines ?? 4)) * 100)}% online` : '100%'}
-              </span>
-            </div>
-          </div>
-
-          {/* Card 3: Dung tích thùng nén rPET (RVM Machines) */}
-          <div
-            onClick={() => router.push('/machines')}
-            style={{ cursor: 'pointer', transition: 'transform 0.15s ease' }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-            title="Bấm để giám sát mức đầy các thùng chứa"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-              <span>Dung tích thùng nén</span>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.1, margin: '8px 0 6px' }}>
-              {stats.avg_bin_fill_percent != null ? `${stats.avg_bin_fill_percent}%` : '71.3%'}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <span style={{ color: '#94a3b8' }}>{stats.bins_reporting ?? 4} khoang nén</span>
-              <span
-                style={{
-                  color: Number(stats.full_bins ?? 1) > 0 ? '#d97706' : '#16a34a',
-                  fontWeight: 700,
-                  fontSize: 11.5,
-                  background: Number(stats.full_bins ?? 1) > 0 ? '#fffbeb' : '#f0fdf4',
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                  border: Number(stats.full_bins ?? 1) > 0 ? '1px solid #fef3c7' : '1px solid #dcfce7'
-                }}
-              >
-                {Number(stats.full_bins ?? 1) > 0 ? `${stats.full_bins ?? 1} thùng ≥85%` : 'Ổn định'}
-              </span>
-            </div>
-          </div>
-
-          {/* Card 4: Hành vi gửi vỏ / phiên (Consumer Behavior) */}
-          <div
-            onClick={() => router.push('/sessions')}
-            style={{ cursor: 'pointer', transition: 'transform 0.15s ease' }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-            title="Bấm để xem nhật ký telemetry phiên gửi"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
-                <path d="m9 12 2 2 4-4" />
-              </svg>
-              <span>Vỏ chai / Phiên gửi</span>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.1, margin: '8px 0 6px' }}>
-              {stats.avg_bottles_per_session != null ? stats.avg_bottles_per_session : '13.2'} <span style={{ fontSize: 18, fontWeight: 600, color: '#64748b' }}>chai</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <span style={{ color: '#94a3b8' }}>{number(stats.sessions_today ?? 16)} phiên hôm nay</span>
-              <span style={{ color: '#16a34a', fontWeight: 700, fontSize: 11.5, background: '#f0fdf4', padding: '1px 6px', borderRadius: 4, border: '1px solid #dcfce7' }}>
-                {stats.acceptance_rate ?? 100}% đạt chuẩn
-              </span>
-            </div>
-          </div>
-
-          {/* Card 5: Hành vi đổi thưởng & rút tiền (Consumer Behavior) */}
-          <div
-            onClick={() => router.push('/cashouts')}
-            style={{ cursor: 'pointer', transition: 'transform 0.15s ease' }}
-            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-            title="Bấm để xem danh sách yêu cầu đổi tiền"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#64748b', fontSize: 13, fontWeight: 600 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" />
-                <path d="M12 18V6" />
-              </svg>
-              <span>Hàng đợi đổi thưởng</span>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', lineHeight: 1.1, margin: '8px 0 6px' }}>
-              {number(stats.pending_cashouts ?? 1)} <span style={{ fontSize: 18, fontWeight: 600, color: '#64748b' }}>đơn</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-              <span style={{ color: '#94a3b8' }}>{number(stats.total_points_distributed ?? 25660)} điểm cấp</span>
-              <span
-                style={{
-                  color: Number(stats.pending_cashouts ?? 1) > 0 ? '#d97706' : '#16a34a',
-                  fontWeight: 700,
-                  fontSize: 11.5,
-                  background: Number(stats.pending_cashouts ?? 1) > 0 ? '#fffbeb' : '#f0fdf4',
-                  padding: '1px 6px',
-                  borderRadius: 4,
-                  border: Number(stats.pending_cashouts ?? 1) > 0 ? '1px solid #fef3c7' : '1px solid #dcfce7'
-                }}
-              >
-                {Number(stats.pending_cashouts ?? 1) > 0 ? '⏳ 1 chờ duyệt' : '✓ Hoàn tất'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* =================================================================
-            3. MIDDLE SECTION: RVM MACHINE NETWORK (LEFT) + CONSUMER BEHAVIOR & ACTIONS (RIGHT)
-            ================================================================= */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 460px), 1fr))',
-            gap: 20,
-            marginBottom: 20
-          }}
-        >
-          {/* MIDDLE LEFT: Coverage & Machine Status */}
-          <div
+            role={overview.error ? 'alert' : 'status'}
             style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 16,
-              padding: '22px 24px',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)'
+              padding: '10px 14px',
+              marginBottom: 16,
+              border: `1px solid ${overview.error ? '#fecaca' : '#dbeafe'}`,
+              borderRadius: 10,
+              background: overview.error ? '#fff7f7' : '#f8fbff',
+              color: overview.error ? '#991b1b' : '#475569',
+              fontSize: 13
             }}
           >
-            {/* Header with Interactive Station Filter */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 750, color: '#0f172a' }}>Mạng lưới trạm máy RVM</h3>
-                <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#64748b' }}>Trực tuyến {stats.online_machines ?? 3}/{stats.total_machines ?? 4} máy · Dung lượng nén TB {stats.avg_bin_fill_percent ?? 71.3}%</p>
-              </div>
-
-              {/* Station Filter Pills */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {[
-                  { key: 'all', label: `Tất cả (${rawStations.length})` },
-                  { key: 'online', label: `Online (${rawStations.filter(s => String(s.connectivity).toUpperCase() === 'ONLINE').length})` },
-                  { key: 'high_fill', label: `Thùng ≥80% (${rawStations.filter(s => Number(s.avg_fill_percent ?? 0) >= 80).length})` },
-                  { key: 'alert', label: `Sự cố (${rawStations.filter(s => Number(s.open_alerts ?? 0) > 0).length})` }
-                ].map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setStationFilter(tab.key as typeof stationFilter)}
-                    style={{
-                      background: stationFilter === tab.key ? '#0f172a' : '#f1f5f9',
-                      border: '1px solid',
-                      borderColor: stationFilter === tab.key ? '#0f172a' : '#e2e8f0',
-                      color: stationFilter === tab.key ? '#ffffff' : '#475569',
-                      fontSize: 11.5,
-                      fontWeight: 650,
-                      padding: '3px 9px',
-                      borderRadius: 9999,
-                      cursor: 'pointer',
-                      fontFamily: font,
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Table */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 420 }}>
-                <thead>
-                  <tr style={{ color: '#94a3b8', fontSize: 11.5, fontWeight: 600, borderBottom: '1px solid #e2e8f0' }}>
-                    <th style={{ textAlign: 'left', padding: '0 0 10px', fontWeight: 600 }}>Mã máy / Trạm</th>
-                    <th style={{ textAlign: 'left', padding: '0 0 10px', fontWeight: 600, minWidth: 160 }}>Đầy thùng rPET</th>
-                    <th style={{ textAlign: 'center', padding: '0 0 10px', fontWeight: 600 }}>Kết nối</th>
-                    <th style={{ textAlign: 'center', padding: '0 0 10px', fontWeight: 600 }}>Sự cố</th>
-                    <th style={{ textAlign: 'right', padding: '0 0 10px', fontWeight: 600 }}>Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredStations.map((st, idx) => {
-                    const fill = Math.round(Number(st.avg_fill_percent ?? 0));
-                    const barColor = fill >= 85 ? '#dc2626' : fill >= 75 ? '#d97706' : '#16a34a';
-                    const isOnline = String(st.connectivity).toUpperCase() === 'ONLINE';
-                    const hasAlerts = Number(st.open_alerts ?? 0) > 0;
-                    const statusText = !isOnline ? 'Bảo trì' : hasAlerts ? 'Cần xử lý' : 'Hoạt động';
-                    const statusColor = !isOnline ? '#dc2626' : hasAlerts ? '#d97706' : '#16a34a';
-
-                    return (
-                      <tr
-                        key={idx}
-                        onClick={() => router.push('/machines')}
-                        style={{
-                          borderBottom: idx === filteredStations.length - 1 ? 'none' : '1px solid #f8fafc',
-                          cursor: 'pointer',
-                          transition: 'background 0.15s ease'
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                        title="Bấm để xem chi tiết máy RVM"
-                      >
-                        {/* Machine info */}
-                        <td style={{ padding: '12px 0', verticalAlign: 'middle' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div
-                              style={{
-                                width: 32,
-                                height: 32,
-                                borderRadius: '50%',
-                                background: '#f1f5f9',
-                                border: '1px solid #e2e8f0',
-                                color: '#0f172a',
-                                fontWeight: 700,
-                                fontSize: 11.5,
-                                display: 'grid',
-                                placeItems: 'center',
-                                flexShrink: 0
-                              }}
-                            >
-                              {String(st.machine_code || 'M').slice(-2)}
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 13 }}>{String(st.machine_code)}</div>
-                              <div style={{ fontSize: 11.5, color: '#64748b', maxWidth: 150, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {String(st.location_name || st.city || 'Chưa gán')}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Coverage / Bin fill */}
-                        <td style={{ padding: '12px 12px 12px 0', verticalAlign: 'middle' }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                            <span style={{ fontWeight: 750, color: '#0f172a', fontSize: 13 }}>{fill}%</span>
-                            <span style={{ fontSize: 11, color: '#64748b' }}>
-                              {fill >= 85 ? 'Gần đầy thùng' : 'Còn sức chứa'}
-                            </span>
-                          </div>
-                          <div style={{ height: 4, background: '#f1f5f9', borderRadius: 9999, marginTop: 5, width: '100%', overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, fill))}%`, background: barColor, borderRadius: 9999 }} />
-                          </div>
-                        </td>
-
-                        {/* Connectivity */}
-                        <td style={{ padding: '12px 0', textAlign: 'center', verticalAlign: 'middle' }}>
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 7px',
-                              borderRadius: 4,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              background: isOnline ? '#f0fdf4' : '#fef2f2',
-                              color: isOnline ? '#16a34a' : '#dc2626',
-                              border: isOnline ? '1px solid #bbf7d0' : '1px solid #fecaca'
-                            }}
-                          >
-                            {isOnline ? 'ONLINE' : 'OFFLINE'}
-                          </span>
-                        </td>
-
-                        {/* Open alerts */}
-                        <td style={{ padding: '12px 0', textAlign: 'center', color: hasAlerts ? '#dc2626' : '#0f172a', fontWeight: 700, verticalAlign: 'middle' }}>
-                          {Number(st.open_alerts ?? 0) > 0 ? `⚠️ ${st.open_alerts}` : '0'}
-                        </td>
-
-                        {/* Action status */}
-                        <td style={{ padding: '12px 0', textAlign: 'right', verticalAlign: 'middle' }}>
-                          <span style={{ fontWeight: 700, color: statusColor, fontSize: 11.5, background: `${statusColor}14`, padding: '2px 8px', borderRadius: 4 }}>
-                            {statusText}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {overview.error ? 'Không thể tải số liệu dashboard. Các chỉ số sẽ hiện lại khi kết nối được khôi phục.' : 'Đang đồng bộ số liệu từ database…'}
           </div>
+        )}
 
-          {/* MIDDLE RIGHT: CONSUMER BEHAVIOR & ACTION QUEUE WITH INTERACTIVE TABS */}
+        {!dataReady && !overview.loading && !overview.error && (
           <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 16,
-              padding: '22px 24px',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
-              display: 'flex',
-              flexDirection: 'column'
-            }}
+            role="status"
+            style={{ padding: '10px 14px', marginBottom: 16, border: '1px solid #e2e8f0', borderRadius: 10, color: '#64748b', fontSize: 13 }}
           >
-            {/* Header with Switcher Tabs */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, borderBottom: '1px solid #f1f5f9', paddingBottom: 12 }}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setRightPanelTab('behavior')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    borderBottom: rightPanelTab === 'behavior' ? '2px solid #16a34a' : '2px solid transparent',
-                    color: rightPanelTab === 'behavior' ? '#0f172a' : '#64748b',
-                    fontWeight: 750,
-                    fontSize: 13.5,
-                    padding: '0 0 6px',
-                    cursor: 'pointer',
-                    fontFamily: font
-                  }}
-                >
-                  Hành vi người tiêu dùng
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRightPanelTab('queue')}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    borderBottom: rightPanelTab === 'queue' ? '2px solid #16a34a' : '2px solid transparent',
-                    color: rightPanelTab === 'queue' ? '#0f172a' : '#64748b',
-                    fontWeight: 750,
-                    fontSize: 13.5,
-                    padding: '0 0 6px',
-                    cursor: 'pointer',
-                    fontFamily: font
-                  }}
-                >
-                  Hàng đợi tác vụ ({actionQueueItems.length})
-                </button>
-              </div>
+            Chưa có bản ghi tổng quan; các chỉ số sẽ hiển thị sau khi kết nối database.
+          </div>
+        )}
 
-              <span style={{ fontSize: 11.5, color: '#94a3b8', fontWeight: 600 }}>Thời gian thực</span>
-            </div>
-
-            {/* TAB 1: CONSUMER BEHAVIOR DEEP DIVE */}
-            {rightPanelTab === 'behavior' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* 1. Peak Hours Behavior */}
-                <div style={{ background: '#f8fafc', borderRadius: 10, padding: '12px 14px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>Khung giờ nạp vỏ cao điểm</span>
-                    <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 700 }}>
-                      {cb?.peak_hours?.summary ?? `${lunchPct + eveningPct}% tập trung 2 khung giờ`}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <div style={{ flex: Math.max(25, lunchPct), background: '#e2e8f0', borderRadius: 4, padding: '6px 8px' }}>
-                      <div style={{ fontSize: 11, color: '#64748b' }}>Trưa (11h - 13h)</div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>{lunchPct}% ({lunchSessions} phiên)</div>
-                    </div>
-                    <div style={{ flex: Math.max(25, eveningPct), background: '#dcfce7', borderRadius: 4, padding: '6px 8px', border: '1px solid #bbf7d0' }}>
-                      <div style={{ fontSize: 11, color: '#15803d', fontWeight: 600 }}>Tan tầm (17h - 19h)</div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: '#166534' }}>{eveningPct}% ★ ({eveningSessions} phiên)</div>
-                    </div>
-                    {otherPct > 0 && (
-                      <div style={{ flex: Math.max(10, otherPct), background: '#f1f5f9', borderRadius: 4, padding: '6px 8px', textAlign: 'center' }}>
-                        <div style={{ fontSize: 11, color: '#94a3b8' }}>Khác</div>
-                        <div style={{ fontSize: 11.5, fontWeight: 700, color: '#64748b' }}>{otherPct}%</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. Redemption Split: Voucher vs Cash */}
-                <div style={{ background: '#f8fafc', borderRadius: 10, padding: '12px 14px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>Hành vi đổi điểm thưởng của người dùng</span>
-                    <span style={{ fontSize: 11, color: '#64748b' }}>{number(stats.total_points_distributed ?? 25660)} điểm</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ color: '#475569' }}>Voucher đối tác ({voucherCount} lượt)</span>
-                        <strong style={{ color: '#0f172a' }}>{voucherPct}%</strong>
-                      </div>
-                      <div style={{ height: 6, background: '#e2e8f0', borderRadius: 9999, overflow: 'hidden' }}>
-                        <div style={{ width: `${voucherPct}%`, height: '100%', background: '#16a34a' }} />
-                      </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ color: '#475569' }}>Rút tiền mặt ({cashoutCount} đơn)</span>
-                        <strong style={{ color: '#0f172a' }}>{cashoutPct}%</strong>
-                      </div>
-                      <div style={{ height: 6, background: '#e2e8f0', borderRadius: 9999, overflow: 'hidden' }}>
-                        <div style={{ width: `${cashoutPct}%`, height: '100%', background: '#0284c7' }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 3. Session Volume & Retention Metric */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={{ background: '#f8fafc', borderRadius: 10, padding: '10px 12px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ fontSize: 11.5, color: '#64748b' }}>Thói quen nạp vỏ / phiên</div>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a', margin: '3px 0' }}>
-                      {cb?.session_volume?.summary ?? '1 - 18 chai'}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                      TB {stats.avg_bottles_per_session ?? 13.2} chai / lần gửi
-                    </div>
-                  </div>
-                  <div style={{ background: '#f8fafc', borderRadius: 10, padding: '10px 12px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ fontSize: 11.5, color: '#64748b' }}>Tỷ lệ tái tuần hoàn</div>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a', margin: '3px 0' }}>
-                      {cb?.retention?.summary ?? '100% người dùng'}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>
-                      {cb?.retention?.repeat_users ?? 2}/{cb?.retention?.total_users ?? 2} người dùng gửi nhiều lần
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 2: OPERATIONAL ACTION QUEUE */}
-            {rightPanelTab === 'queue' && (
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {actionQueueItems.map((item) => {
-                  const isCleared = clearedActions[item.id];
-                  return (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        padding: '10px 0',
-                        borderBottom: item.id === actionQueueItems.length - 1 ? 'none' : '1px solid #f8fafc',
-                        opacity: isCleared ? 0.45 : 1,
-                        transition: 'opacity 0.2s ease'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
-                        <div
-                          style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: 8,
-                            background: '#f8fafc',
-                            border: '1px solid #e2e8f0',
-                            color: '#475569',
-                            display: 'grid',
-                            placeItems: 'center',
-                            flexShrink: 0
-                          }}
-                        >
-                          {item.icon}
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: 12.5,
-                              fontWeight: 650,
-                              color: '#0f172a',
-                              textDecoration: isCleared ? 'line-through' : 'none',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}
-                          >
-                            {item.title}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#94a3b8' }}>{item.sub}</div>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleAction(item.id);
-                          if (!isCleared && item.route) router.push(item.route);
-                        }}
-                        style={{
-                          padding: '5px 14px',
-                          borderRadius: 9999,
-                          background: isCleared ? '#f1f5f9' : '#ffffff',
-                          border: '1px solid #cbd5e1',
-                          color: '#0f172a',
-                          fontSize: 11.5,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          fontFamily: font,
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                          flexShrink: 0,
-                          transition: 'all 0.15s ease'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isCleared) {
-                            e.currentTarget.style.background = '#0f172a';
-                            e.currentTarget.style.color = '#ffffff';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isCleared) {
-                            e.currentTarget.style.background = '#ffffff';
-                            e.currentTarget.style.color = '#0f172a';
-                          }
-                        }}
-                      >
-                        {item.btn}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Bottom Status bar */}
+        <div
+          aria-label="Các chỉ số tổng quan từ database"
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(172px, 1fr))', gap: 12, marginBottom: 18 }}
+        >
+          {[
+            {
+              label: 'Khách hàng hoạt động',
+              value: dataReady ? number(stats.active_customers) : '—',
+              note: dataReady ? `${number(stats.total_users)} tài khoản trong hệ thống` : 'Chưa có số liệu'
+            },
+            {
+              label: 'Máy RVM đang hoạt động',
+              value: dataReady ? number(stats.active_machines) : '—',
+              note: dataReady ? `${number(stats.total_machines)} máy · ${number(stats.total_locations)} địa điểm` : 'Chưa có số liệu'
+            },
+            {
+              label: 'Mức đầy thùng trung bình',
+              value: dataReady && stats.avg_bin_fill_percent !== null && stats.avg_bin_fill_percent !== undefined
+                ? `${number(Math.round(Number(stats.avg_bin_fill_percent)))}%`
+                : '—',
+              note: dataReady ? `${number(stats.bins_reporting)} / ${number(stats.total_bins)} thùng có số đo` : 'Chưa có số liệu'
+            },
+            {
+              label: 'Bao bì đạt chuẩn hôm nay',
+              value: dataReady ? number(stats.accepted_items_today) : '—',
+              note: dataReady
+                ? `${number(stats.rejected_items_today)} bị từ chối · ${metricValue(stats.avg_bottles_per_session)} đạt/phiên · ${metricValue(stats.acceptance_rate)}${stats.acceptance_rate == null ? '' : '%'} đạt`
+                : 'Chưa có số liệu'
+            },
+            {
+              label: 'Điểm đã cấp hôm nay',
+              value: dataReady ? number(stats.points_issued_today) : '—',
+              note: dataReady ? `${number(stats.sessions_today)} phiên bắt đầu hôm nay` : 'Chưa có số liệu'
+            },
+            {
+              label: 'Yêu cầu đổi tiền chờ duyệt',
+              value: dataReady ? number(stats.pending_cashouts) : '—',
+              note: 'Đang chờ quản trị viên xử lý'
+            }
+          ].map((metric, index) => (
             <div
+              key={metric.label}
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingTop: 14,
-                marginTop: 'auto',
-                borderTop: '1px solid #e2e8f0',
-                fontSize: 11.5,
-                color: '#64748b'
+                minWidth: 0,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 12,
+                padding: '16px 17px 15px',
+                boxShadow: '0 1px 2px rgba(15,23,42,0.03)'
               }}
             >
-              <span>Đồng bộ tự động cùng Cơ sở dữ liệu MariaDB</span>
-              <button
-                type="button"
-                onClick={() => {
-                  if (clearedCount === actionQueueItems.length) setClearedActions({});
-                  else {
-                    const allCleared: Record<number, boolean> = {};
-                    actionQueueItems.forEach((it) => { allCleared[it.id] = true; });
-                    setClearedActions(allCleared);
-                  }
-                }}
-                title="Bấm để đánh dấu tất cả hoàn thành"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#64748b',
-                  fontSize: 11.5,
-                  cursor: 'pointer',
-                  fontWeight: 650,
-                  fontFamily: font
-                }}
-              >
-                {clearedCount} of {actionQueueItems.length} tác vụ đã xử lý
-              </button>
+              <div style={{ fontSize: 12, lineHeight: 1.4, fontWeight: 650, color: '#64748b', minHeight: 34 }}>{metric.label}</div>
+              <div style={{ marginTop: 7, fontSize: 27, lineHeight: 1.15, fontWeight: 760, letterSpacing: '-0.035em', color: index === 3 ? '#167a45' : '#102a20', fontVariantNumeric: 'tabular-nums' }}>
+                {metric.value}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.45, color: '#64748b' }}>{metric.note}</div>
             </div>
-          </div>
+          ))}
         </div>
 
         {/* =================================================================
-            4. BOTTOM SECTION: DEMAND MIX 21-DAY CHART (INTERACTIVE METRIC SWITCHER)
+            2. ACTIVITY CHART (INTERACTIVE METRIC SWITCHER)
             ================================================================= */}
         <div
           style={{
@@ -1462,25 +789,20 @@ function Dashboard() {
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 14, marginBottom: 18 }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 750, color: '#0f172a' }}>
-                Xu hướng thu gom &amp; Hành vi tái chế (21 ngày qua)
-              </h3>
-              <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#64748b' }}>
-                Số liệu thực tế khớp database MySQL/MariaDB với mục tiêu tiêu chuẩn PowerBI
-              </p>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 750, color: '#0f172a' }}>Hoạt động thu gom</h3>
+              <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#64748b' }}>Số liệu ghi nhận từ phiên gửi và giao dịch điểm trong database.</p>
             </div>
-
-            {/* Interactive Metric Switcher & Legend */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#f1f5f9', padding: '3px', borderRadius: 8 }}>
                 {[
-                  { key: 'supply', label: 'Vỏ chai (Chai)' },
-                  { key: 'sessions', label: 'Phiên gửi (Lượt)' },
+                  { key: 'supply', label: 'Vỏ đạt chuẩn' },
+                  { key: 'sessions', label: 'Phiên gửi' },
                   { key: 'points', label: 'Điểm thưởng' }
                 ].map((m) => (
                   <button
                     key={m.key}
                     type="button"
+                    aria-pressed={chartMetric === m.key}
                     onClick={() => setChartMetric(m.key as typeof chartMetric)}
                     style={{
                       background: chartMetric === m.key ? '#ffffff' : 'transparent',
@@ -1492,153 +814,117 @@ function Dashboard() {
                       padding: '4px 10px',
                       borderRadius: 6,
                       cursor: 'pointer',
-                      fontFamily: font,
-                      transition: 'all 0.15s ease'
+                      fontFamily: font
                     }}
                   >
                     {m.label}
                   </button>
                 ))}
               </div>
-
-              {/* Legend */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 10, height: 10, background: '#16a34a', borderRadius: 2 }} />
-                  <span style={{ color: '#64748b' }}>Thực tế</span>
-                  <strong style={{ color: '#0f172a', fontWeight: 700 }}>{number(totalSupply)}</strong>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ display: 'inline-block', width: 14, height: 2.5, background: '#0f172a', borderRadius: 1 }} />
-                  <span style={{ color: '#64748b' }}>Mục tiêu</span>
-                  <strong style={{ color: '#0f172a', fontWeight: 700 }}>{number(totalForecast)}</strong>
-                </div>
-
-                <span
-                  style={{
-                    background: diffSupply >= 0 ? '#f0fdf4' : '#fef2f2',
-                    border: diffSupply >= 0 ? '1px solid #bbf7d0' : '1px solid #fecaca',
-                    color: diffSupply >= 0 ? '#16a34a' : '#dc2626',
-                    fontWeight: 750,
-                    fontSize: 11.5,
-                    padding: '1px 7px',
-                    borderRadius: 4
-                  }}
-                >
-                  {diffSupply >= 0 ? `+${number(diffSupply)}` : number(diffSupply)}
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <span style={{ display: 'inline-block', width: 10, height: 10, background: '#16a34a', borderRadius: 2 }} />
+                <span style={{ color: '#64748b' }}>Đã ghi nhận</span>
+                <strong style={{ color: '#0f172a', fontWeight: 700 }}>{number(totalMetric)}</strong>
               </div>
             </div>
           </div>
 
-          {/* 21-day bar chart with benchmark dashes & interactive hover tooltip */}
-          <div
-            style={{
-              height: 180,
-              display: 'flex',
-              alignItems: 'flex-end',
-              gap: 5,
-              padding: '24px 0 0',
-              borderBottom: '1px solid #e2e8f0',
-              position: 'relative'
-            }}
-          >
-            {filteredDemandMix.map((bar, idx) => {
-              const isHovered = hoveredBar === idx;
-              const isToday = idx === filteredDemandMix.length - 1;
-              const val = getMetricValue(bar);
-              const target = getMetricTarget(bar);
-              const barHeightPct = Math.round((val / maxVal) * 100);
-              const forecastTopPct = Math.round(100 - (target / maxVal) * 100);
-
-              return (
-                <div
-                  key={bar.day}
-                  onMouseEnter={() => setHoveredBar(idx)}
-                  onMouseLeave={() => setHoveredBar(null)}
-                  style={{
-                    flex: 1,
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'flex-end',
-                    position: 'relative',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {/* Floating Tooltip on Hover */}
-                  {isHovered && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        bottom: '105%',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        background: '#0f172a',
-                        color: '#ffffff',
-                        padding: '6px 10px',
-                        borderRadius: 6,
-                        fontSize: 11,
-                        whiteSpace: 'nowrap',
-                        zIndex: 10,
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                        pointerEvents: 'none',
-                        fontFamily: font
-                      }}
-                    >
-                      <div style={{ fontWeight: 700 }}>{bar.fullDate}</div>
-                      <div style={{ color: '#86efac' }}>Thực tế: {number(val)}</div>
-                      <div style={{ color: '#cbd5e1' }}>Mục tiêu: {number(target)}</div>
-                    </div>
-                  )}
-
-                  {/* The Bar */}
-                  <div
-                    style={{
-                      width: '100%',
-                      height: `${Math.max(4, barHeightPct)}%`,
-                      background: isHovered ? '#16a34a' : isToday ? '#22c55e' : '#cbd5e1',
-                      borderRadius: '2px 2px 0 0',
-                      transition: 'background 0.15s ease',
-                      position: 'relative'
-                    }}
+          {/* Database-backed line chart. The axes and series container stay visible when there are no rows. */}
+          <div style={{ position: 'relative', width: '100%', height: 220 }}>
+            <svg
+              role="img"
+              aria-label={`${chartMetric === 'supply' ? 'Bao bì đạt chuẩn' : chartMetric === 'sessions' ? 'Phiên gửi' : 'Điểm thưởng'} theo ngày`}
+              viewBox="0 0 1000 220"
+              preserveAspectRatio="none"
+              style={{ display: 'block', width: '100%', height: '100%', overflow: 'visible' }}
+            >
+              {[34, 106, 178].map((y, index) => (
+                <g key={y}>
+                  <line x1="48" x2="988" y1={y} y2={y} stroke="#e7ece8" strokeWidth="1" />
+                  <text x="0" y={y + 4} fill="#748078" fontSize="11" fontFamily={font}>
+                    {number(Math.round((maxVal * (2 - index)) / 2))}
+                  </text>
+                </g>
+              ))}
+              {chartPoints.length > 0 && (
+                <polyline
+                  points={chartPoints.map((point) => `${point.x},${point.y}`).join(' ')}
+                  fill="none"
+                  stroke={hasActivity ? '#18834b' : '#a9b8af'}
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+              {chartPoints.map((point) => (
+                <g key={point.day}>
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={hoveredBar === point.index ? 7 : hasActivity && point.value > 0 ? 4 : 2.5}
+                    fill={hoveredBar === point.index ? '#0f5d36' : hasActivity && point.value > 0 ? '#18834b' : '#a9b8af'}
+                    stroke="#ffffff"
+                    strokeWidth={hoveredBar === point.index ? 2 : 1}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={() => setHoveredBar(point.index)}
+                    onMouseLeave={() => setHoveredBar(null)}
+                  >
+                    <title>{`${point.fullDate}: ${number(point.value)}`}</title>
+                  </circle>
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r="12"
+                    fill="transparent"
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={() => setHoveredBar(point.index)}
+                    onMouseLeave={() => setHoveredBar(null)}
                   />
+                </g>
+              ))}
+            </svg>
 
-                  {/* The Horizontal Target Benchmark Dash */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: `${Math.max(0, Math.min(98, forecastTopPct))}%`,
-                      left: '-15%',
-                      width: '130%',
-                      height: 2,
-                      background: isHovered ? '#16a34a' : '#0f172a',
-                      zIndex: 3,
-                      pointerEvents: 'none',
-                      transition: 'background 0.15s ease'
-                    }}
-                  />
-                </div>
-              );
-            })}
+            {hoveredBar !== null && chartPoints[hoveredBar] && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${(chartPoints[hoveredBar].x / 1000) * 100}%`,
+                  top: `${(chartPoints[hoveredBar].y / 220) * 100}%`,
+                  transform: 'translate(-50%, -115%)',
+                  background: '#102a20',
+                  color: '#ffffff',
+                  padding: '7px 10px',
+                  borderRadius: 7,
+                  fontSize: 11,
+                  whiteSpace: 'nowrap',
+                  zIndex: 2,
+                  boxShadow: '0 4px 12px rgba(15,23,42,0.16)',
+                  pointerEvents: 'none',
+                  fontFamily: font
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>{chartPoints[hoveredBar].fullDate}</div>
+                <div style={{ color: '#b7f0c8' }}>{number(chartPoints[hoveredBar].value)} {chartMetric === 'supply' ? 'bao bì' : chartMetric === 'sessions' ? 'phiên' : 'điểm'}</div>
+              </div>
+            )}
+
+            {!hasActivity && (
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none' }}>
+                <span style={{ padding: '7px 11px', background: 'rgba(255,255,255,0.92)', color: '#64748b', fontSize: 12, borderRadius: 7 }}>
+                  Chưa phát sinh dữ liệu trong khoảng thời gian này
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* X-axis Day Labels */}
-          <div style={{ display: 'flex', gap: 5, marginTop: 8 }}>
-            {filteredDemandMix.map((bar, idx) => {
-              const isToday = idx === filteredDemandMix.length - 1;
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(filteredDemandMix.length, 1)}, minmax(0, 1fr))`, paddingLeft: '4.8%', paddingRight: '1.2%', marginTop: 7 }}>
+            {filteredDemandMix.map((item, index) => {
+              const isToday = item.day === String(stats.today ?? '');
+              const showLabel = index === 0 || index === filteredDemandMix.length - 1 || index % xLabelStep === 0;
               return (
-                <div
-                  key={bar.day}
-                  style={{
-                    flex: 1,
-                    textAlign: 'center',
-                    fontSize: 10.5,
-                    fontWeight: isToday ? 800 : 500,
-                    color: isToday ? '#16a34a' : hoveredBar === idx ? '#0f172a' : '#94a3b8'
-                  }}
-                >
-                  {bar.dateLabel}
+                <div key={item.day} style={{ textAlign: index === filteredDemandMix.length - 1 ? 'right' : index === 0 ? 'left' : 'center', fontSize: 10.5, fontWeight: isToday ? 750 : 500, color: isToday ? '#167a45' : '#748078', minHeight: 16 }}>
+                  {showLabel ? item.dateLabel : ''}
                 </div>
               );
             })}
@@ -1646,8 +932,8 @@ function Dashboard() {
 
           {/* Footer Caption */}
           <div style={{ marginTop: 12, fontSize: 12, color: '#64748b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <span>Số liệu tổng hợp tự động từ chuỗi máy trạm RVM thông qua IoT Broker và telemetry</span>
-            <span>21 ngày gần nhất • Cập nhật trực tiếp từ hệ thống BravoForest</span>
+            <span>Nguồn: bản ghi giao dịch và phiên gửi trong database.</span>
+            <span>{dateRange === 'today' ? 'Hôm nay' : dateRange === '7d' ? '7 ngày gần nhất' : dateRange === '30d' ? '30 ngày gần nhất' : '21 ngày gần nhất'}</span>
           </div>
         </div>
       </div>
@@ -1661,13 +947,13 @@ function DataPage({ route }: { route: string }) {
   const spec: Record<string, { path: string; heads: string[]; keys: string[] }> = {
     users: {
       path: '/admin/users',
-      heads: ['Thành viên', 'Email / Số điện thoại', 'Điểm thưởng', 'Trạng thái', 'Thao tác'],
+      heads: ['Thành viên', 'Email / Số điện thoại', 'Điểm thưởng', 'Trạng thái', 'Quản lý'],
       keys: ['full_name', 'email', 'balance', 'status']
     },
     machines: {
       path: '/admin/machines',
-      heads: ['Mã thiết bị', 'Địa điểm lắp đặt', 'Kết nối', 'Trạng thái vận hành', 'Thao tác'],
-      keys: ['machine_code', 'location_name', 'connectivity', 'operational_status']
+      heads: ['Mã thiết bị', 'Địa điểm lắp đặt', 'Trạng thái vận hành'],
+      keys: ['machine_code', 'location_name', 'operational_status']
     },
     locations: {
       path: '/admin/locations',
@@ -1731,7 +1017,7 @@ function DataPage({ route }: { route: string }) {
   const visible = records;
   const filters: Record<string, Array<[string, string]>> = {
     users: [['ACTIVE', 'Hoạt động'], ['LOCKED', 'Đã khóa'], ['DELETED', 'Đã xóa']],
-    machines: [['ACTIVE', 'Đang hoạt động'], ['MAINTENANCE', 'Bảo trì'], ['DISABLED', 'Đã tắt'], ['DECOMMISSIONED', 'Ngừng hoạt động'], ['ONLINE', 'Trực tuyến'], ['OFFLINE', 'Ngoại tuyến']],
+    machines: [['ACTIVE', 'Đang hoạt động'], ['MAINTENANCE', 'Bảo trì'], ['DISABLED', 'Đã tắt'], ['DECOMMISSIONED', 'Ngừng hoạt động']],
     locations: [['1', 'Đang hoạt động'], ['0', 'Đã ngừng']],
     sessions: [['WAITING_LOGIN', 'Chờ đăng nhập'], ['DEPOSITING', 'Đang gửi'], ['PROCESSING', 'Đang xử lý'], ['COMPLETED', 'Hoàn tất'], ['CANCELLED', 'Đã hủy'], ['EXPIRED', 'Hết hạn']],
     vouchers: [['DRAFT', 'Bản nháp'], ['ACTIVE', 'Đang mở'], ['PAUSED', 'Tạm dừng'], ['ARCHIVED', 'Lưu trữ']],
@@ -1805,17 +1091,6 @@ function DataPage({ route }: { route: string }) {
       result.refresh();
     } catch (e) {
       setNotice({ msg: e instanceof Error ? e.message : 'Không thể cập nhật trạng thái.', type: 'error' });
-    }
-  };
-
-  const removeMachine = async (id: string) => {
-    if (!confirm('Xác nhận ngừng vận hành máy RVM này?')) return;
-    try {
-      await apiDelete(`/admin/machines/${id}`);
-      setNotice({ msg: 'Đã ngừng vận hành máy RVM.', type: 'success' });
-      result.refresh();
-    } catch (e) {
-      setNotice({ msg: e instanceof Error ? e.message : 'Không thể cập nhật máy.', type: 'error' });
     }
   };
 
@@ -2013,16 +1288,6 @@ function DataPage({ route }: { route: string }) {
                     />
                   );
                 })()
-              ] : route === 'machines' ? [canManage ?
-                <button
-                  key="action"
-                  className="button button-danger"
-                  style={{ padding: '6px 12px', fontSize: 12 }}
-                  onClick={() => removeMachine(String(val(r, 'machine_id', 'id')))}
-                >
-                  Ngừng máy
-                </button>
-                : <span key="readonly" className="badge badge-gray">CHỈ XEM</span>
               ] : [])
             ])}
           />

@@ -382,7 +382,8 @@ export class SessionsService {
               (di.rule_id IS NOT NULL) accepted,COALESCE(pr.points_per_item,0) points,
               JSON_UNQUOTE(JSON_EXTRACT(di.sensor_data,'$.aiClass')) ai_class,
               CAST(JSON_UNQUOTE(JSON_EXTRACT(di.sensor_data,'$.aiConfidence')) AS DECIMAL(5,4)) ai_confidence,
-              JSON_UNQUOTE(JSON_EXTRACT(di.sensor_data,'$.reason')) reject_reason
+              JSON_UNQUOTE(JSON_EXTRACT(di.sensor_data,'$.reason')) reject_reason,
+              rr.code reject_code
        FROM deposit_items di
        LEFT JOIN point_rules pr ON pr.rule_id=di.rule_id
        LEFT JOIN container_types ct ON ct.container_type_id=pr.container_type_id

@@ -18,8 +18,23 @@ async function bootstrap() {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+  const isDevelopmentLanOrigin = (origin: string) => {
+    if (process.env.NODE_ENV === 'production') return false;
+    try {
+      const url = new URL(origin);
+      const privateHost = url.hostname === 'localhost'
+        || url.hostname === '127.0.0.1'
+        || /^10\./.test(url.hostname)
+        || /^192\.168\./.test(url.hostname)
+        || /^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname);
+      return url.protocol === 'http:' && privateHost && ['3000', '3001', '3002'].includes(url.port);
+    } catch {
+      return false;
+    }
+  };
+  const isOriginAllowed = (origin?: string) => !origin || origins.includes(origin) || isDevelopmentLanOrigin(origin);
   const cors: CorsOptions = {
-    origin: (origin, callback) => callback(null, !origin || origins.includes(origin)),
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   };
@@ -32,10 +47,10 @@ async function bootstrap() {
       request.cookies?.bf_customer_refresh_token || request.cookies?.bf_admin_refresh_token || request.cookies?.refresh_token,
     );
     const origin = request.headers.origin;
-    if (usesRefreshCookie && request.method === 'POST' && hasRefreshCookie && (!origin || !origins.includes(origin))) {
+    if (usesRefreshCookie && request.method === 'POST' && hasRefreshCookie && !isOriginAllowed(origin)) {
       return response.status(403).json({ message: 'Origin rejected' });
     }
-    if (usesRefreshCookie && request.method === 'POST' && origin && !origins.includes(origin)) {
+    if (usesRefreshCookie && request.method === 'POST' && origin && !isOriginAllowed(origin)) {
       return response.status(403).json({ message: 'Origin rejected' });
     }
     next();

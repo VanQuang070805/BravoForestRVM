@@ -20,8 +20,10 @@ nano deploy/pi/.env
 - `RVM_MACHINE_ID` và `RVM_API_KEY`: thông tin máy được cấp từ trang quản trị;
 - `RVM_DISPLAY_PORT`: mặc định là `3002`.
 - `PET_RULE_ID` và `CAN_RULE_ID`: ID quy tắc điểm cho chai PET và lon của máy;
-- `CAMERA_BACKEND=opencv` cho USB camera hoặc `picamera2` cho Pi Camera CSI;
+- `CAMERA_BACKEND=picamera2` cho Pi Camera CSI; dùng `opencv` khi chủ động chuyển sang USB camera;
+- `CAMERA_DEVICE`: đường dẫn ổn định `/dev/v4l/by-id/...-video-index0` của camera USB; để trống thì dùng `CAMERA_INDEX`;
 - `ARDUINO_SERIAL_PORT=auto` để tự tìm Arduino, hoặc đặt rõ như `/dev/ttyACM0`.
+- `ARDUINO_PROTOCOL=legacy` cho sketch `arduino_sorter_test.ino` dùng lệnh `MOTOR:`/`SERVO:`; dùng `bravoforest` cho firmware trong `deploy/pi/arduino`.
 
 Không commit file `.env` vì file chứa API key của máy.
 
@@ -31,7 +33,7 @@ Không commit file `.env` vì file chứa API key của máy.
 sh deploy/pi/install-api-discovery-autostart.sh
 ```
 
-Watcher dùng mDNS (`<hostname>.local`) để tìm IP máy tính quản lý rồi cập nhật URL cho kiosk và camera AI. Hai máy cần cùng mạng và mạng đó phải cho phép thiết bị nhìn thấy nhau. Cổng API vẫn giữ nguyên `4000`; nếu API được chuyển sang cổng khác, cập nhật `MANAGEMENT_API_PORT`.
+Watcher dùng mDNS (`<hostname>.local`) để tìm các IP của máy tính quản lý, gọi health check và chỉ chọn địa chỉ thực sự truy cập được. Cách này tránh chọn nhầm card mạng ảo WSL/Docker khi máy có nhiều IP. Hai máy cần cùng mạng và mạng đó phải cho phép thiết bị nhìn thấy nhau. Cổng API vẫn giữ nguyên `4000`; nếu API được chuyển sang cổng khác, cập nhật `MANAGEMENT_API_PORT`.
 
 ## Sau mỗi lần pull code
 
@@ -73,7 +75,9 @@ sh deploy/pi/stop.sh
 
 ## Bật camera AI và Arduino
 
-Nạp sketch [`arduino/bravoforest_rvm/bravoforest_rvm.ino`](arduino/bravoforest_rvm/bravoforest_rvm.ino) vào Arduino trước. Trên Raspberry Pi OS 64-bit, cài controller một lần:
+Controller hỗ trợ cả sketch gốc `arduino_sorter_test.ino` và sketch [`arduino/bravoforest_rvm/bravoforest_rvm.ino`](arduino/bravoforest_rvm/bravoforest_rvm.ino). Chọn đúng `ARDUINO_PROTOCOL` trong `.env`; không cần nạp lại bo mạch khi dùng sketch gốc. Trên Raspberry Pi OS 64-bit, cài controller một lần:
+
+Với `ARDUINO_PROTOCOL=legacy`, camera cho `clean_pet` và `can` đi xuôi khi vật còn trong khung hình, còn `dirty_pet` và `bottle_cap` đi ngược. Giao dịch chỉ được ghi khi cảm biến siêu âm giữ tín hiệu đủ một giây: nếu cảm biến tiệm cận cũng phát hiện trong khoảng đó thì servo đưa lon sang phải 180°, nếu không thì servo đưa chai sang trái 180°. Servo tự quay về giữa sau mỗi lần phân loại.
 
 ```sh
 sudo apt update
@@ -89,21 +93,25 @@ sh deploy/pi/install-controller.sh
 sh deploy/pi/arduino-sorter/start.sh
 ```
 
-Để camera AI luôn chạy cùng giao diện kiosk và tự khởi động lại nếu tiến trình bị dừng, cài dịch vụ người dùng một lần:
+Để camera AI chỉ chạy trong thời gian kiosk hoạt động và tự nhả camera khi đóng kiosk, cài dịch vụ người dùng một lần:
 
 ```sh
-sh deploy/pi/install-camera-ai-autostart.sh
+sh deploy/pi/install-camera-ai-service.sh
 ```
 
-Dịch vụ mở luồng xem camera nội bộ tại `http://127.0.0.1:8765/stream.mjpg`; giao diện kiosk hiển thị luồng này ở cạnh phải trên màn hình 1024×600 và tự kết nối lại nếu camera tạm ngắt. Muốn kiểm tra dịch vụ:
+Dùng lối tắt BravoForest trên Pi hoặc `sh deploy/pi/launch-display.sh` để mở kiosk. Lệnh này bật AI camera trước khi mở kiosk, rồi dừng dịch vụ khi đóng cửa sổ kiosk để giải phóng cảm biến cho ứng dụng Camera thông thường. Mở URL kiosk bằng trình duyệt trên một máy khác không thể tự khởi chạy tiến trình camera trên Pi; `127.0.0.1` cũng luôn trỏ tới chính máy đang chạy trình duyệt. Dịch vụ mở luồng tại `http://127.0.0.1:8765/stream.mjpg`; giao diện kiosk chỉ hiển thị luồng AI của Pi, không tự mở camera của máy đang duyệt web. Nếu ứng dụng Camera đang chiếm cảm biến, kiosk báo camera Pi đang bận và tự kết nối lại sau khi ứng dụng đó đóng. Ngược lại, nếu AI đang chiếm cảm biến, ứng dụng Camera sẽ báo thiết bị đang được sử dụng; đóng kiosk để giải phóng camera.
+
+Muốn kiểm tra trạng thái dịch vụ:
 
 ```sh
 systemctl --user status bravoforest-camera-ai.service
 ```
 
+Camera thật được dùng độc quyền theo lượt: kiosk AI hoặc ứng dụng Camera Pi. Hai ứng dụng không cùng mở cảm biến; ứng dụng mở sau sẽ báo bận. Khi đóng ứng dụng đang giữ camera, ứng dụng còn lại có thể thử kết nối lại. Cách này không thay đổi model, cấu hình AI hoặc Arduino.
+
 Lệnh này dùng controller sản xuất tại `deploy/pi/controller/main.py`, gửi kết quả được nhận và bị từ chối lên API để ghi database, rồi kiosk đọc lại số lượng và điểm từ database. Với database cũ, hãy chạy các migration RVM trong `database/migrations` theo thứ tự trước khi khởi động controller; controller sẽ kiểm tra các lý do từ chối có thật trong database. Mở giao diện toàn màn hình bằng `sh deploy/pi/launch-display.sh` trong phiên desktop của Pi. Có thể gọi trực tiếp `sh deploy/pi/start-rvm.sh` với cùng kết quả.
 
-`start-camera-ai.sh` đọc `CAMERA_ONLY` và `AI_ONLY` từ `deploy/pi/.env`. Khi thiếu Arduino nhưng cấu hình API đã đủ, script chuyển sang `AI_ONLY`: AI camera vẫn xác minh loại bao bì, ghi hoạt động vào API/database và cho kiosk cập nhật phiên. Nếu thiếu cấu hình API, nó chỉ mở preview; nếu có Arduino, thiết bị chỉ chạy sorter và kết quả phân loại không quyết định điểm. Để chỉ xem camera/model mà không ghi database, đặt `CAMERA_ONLY=true` rồi chạy:
+`start-camera-ai.sh` đọc cấu hình từ `deploy/pi/.env`. Khi thiếu Arduino, script luôn chuyển sang `CAMERA_ONLY`: camera vẫn có preview nhưng không ghi giao dịch và không cộng điểm. Với phiên vận hành đầy đủ, AI chỉ đưa ra quyết định phân loại; giao dịch hợp lệ chỉ được xếp hàng sau khi Arduino trả về `RESULT ... 1`. Để chủ động chỉ xem camera/model mà không ghi database, đặt `CAMERA_ONLY=true` rồi chạy:
 
 ```sh
 sh deploy/pi/start-camera-ai.sh
@@ -124,4 +132,4 @@ sudo usermod -aG dialout "$USER"
 
 ## Model và bộ điều khiển phần cứng
 
-Model đã train được lưu tại `deploy/pi/models/best.pt`. Controller chỉ chấp nhận chính xác `clean_pet` và `can`; `dirty_pet`, `bottle_cap` và mọi class khác đều bị trả ra. Giao diện web không chạy inference và không trực tiếp điều khiển GPIO. Xem chi tiết tại [`controller/README.md`](controller/README.md) và [`arduino/README.md`](arduino/README.md).
+Model triển khai mặc định là NCNN tại `deploy/pi/models/best_ncnn_model`, phù hợp CPU ARM của Pi 4. Camera chạy 640×480, controller chỉ giữ frame mới nhất và suy luận mặc định 3 lần/giây ở `imgsz=320`. Controller chỉ chấp nhận chính xác `clean_pet` và `can`; `dirty_pet`, `bottle_cap` và mọi class khác đều bị trả ra. Giao diện web không chạy inference và không trực tiếp điều khiển GPIO. Xem chi tiết tại [`controller/README.md`](controller/README.md) và [`arduino/README.md`](arduino/README.md).

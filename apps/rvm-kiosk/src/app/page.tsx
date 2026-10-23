@@ -33,6 +33,15 @@ type RecentFeedItem = {
   aiClass: string | null;
   confidence: number | null;
   reason: string | null;
+  result: 'accepted' | 'rejected' | 'hardware-error';
+};
+
+type LiveCameraActivity = {
+  id: string;
+  status: 'PROCESSING' | 'SORTING' | 'SYNCING' | 'REJECTED_AI' | 'HARDWARE_ERROR';
+  aiClass: string;
+  confidence: number;
+  message: string;
 };
 
 type RecentItemResponse = {
@@ -43,26 +52,31 @@ type RecentItemResponse = {
   ai_class?: string | null;
   ai_confidence?: number | string | null;
   reject_reason?: string | null;
+  reject_code?: string | null;
 };
 
 function toRecentFeed(value: unknown): RecentFeedItem[] {
   if (!Array.isArray(value)) return [];
   return value.map((item: RecentItemResponse, index) => {
     const confidence = item.ai_confidence == null ? null : Number(item.ai_confidence);
+    const accepted = item.accepted === true || Number(item.accepted) === 1;
     return {
       id: item.item_id === undefined ? `recent-${index}` : String(item.item_id),
       type: item.item_name || 'Bao bì',
       points: Number(item.points || 0),
-      accepted: item.accepted === true || Number(item.accepted) === 1,
+      accepted,
       aiClass: item.ai_class || null,
       confidence: confidence !== null && Number.isFinite(confidence) ? confidence : null,
       reason: item.reject_reason || null,
+      result: accepted ? 'accepted' : item.reject_code === 'SENSOR_REJECTED' ? 'hardware-error' : 'rejected',
     };
   });
 }
 
 function aiClassLabel(value: string) {
   if (value === 'clean_pet') return 'PET sạch';
+  if (value === 'dirty_pet') return 'PET bẩn';
+  if (value === 'bottle_cap') return 'Nắp chai';
   if (value === 'can') return 'Lon kim loại';
   return value.replace(/_/g, ' ').toUpperCase();
 }
@@ -103,6 +117,9 @@ export default function Kiosk() {
   const [cameraImageLoaded, setCameraImageLoaded] = useState(false);
   const [cameraStreamFailed, setCameraStreamFailed] = useState(false);
   const [cameraRetry, setCameraRetry] = useState(0);
+  const [cameraSource, setCameraSource] = useState<'ai' | 'none'>('none');
+  const [cameraMessage, setCameraMessage] = useState('Đang kết nối camera AI của Pi…');
+  const [liveCameraActivity, setLiveCameraActivity] = useState<LiveCameraActivity | null>(null);
   const [scanOptions, setScanOptions] = useState<ScanOption[]>([]);
   const [machine, setMachine] = useState<MachineInfo | null>(null);
   const [customer, setCustomer] = useState<KioskCustomer | null>(null);
@@ -125,33 +142,65 @@ export default function Kiosk() {
   const lastActivityReportAt = useRef(0);
   const latestDepositItemId = useRef<string | null>(null);
   const linkedCustomer = useRef(false);
+  const cameraSourceRef = useRef<'ai' | 'none'>('none');
+  const cameraCheckInFlightRef = useRef(false);
 
   useEffect(() => {
     let stopped = false;
-    const image = document.querySelector<HTMLImageElement>('.kiosk-camera-frame img');
-    if (image?.naturalWidth) setCameraImageLoaded(true);
     const checkCamera = async () => {
+      if (cameraCheckInFlightRef.current) return;
+      cameraCheckInFlightRef.current = true;
       try {
-        const response = await fetch('http://127.0.0.1:8765/health', { cache: 'no-store' });
-        const result = await response.json().catch(() => null) as { status?: string; frameAgeMs?: number | null } | null;
-        const isReady = response.ok && result?.status === 'ready';
-        if (!stopped) setCameraConnected(isReady);
-      } catch {
-        if (!stopped) setCameraConnected(false);
+        await updateCameraConnection();
+      } finally {
+        cameraCheckInFlightRef.current = false;
       }
     };
+    const updateCameraConnection = async () => {
+      let aiReady = false;
+      try {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 1800);
+        const response = await fetch('http://127.0.0.1:8765/health', {
+          cache: 'no-store',
+          signal: controller.signal,
+        }).finally(() => window.clearTimeout(timeout));
+        const result = await response.json().catch(() => null) as {
+          status?: string;
+          frameAgeMs?: number | null;
+          activity?: LiveCameraActivity | null;
+        } | null;
+        aiReady = response.ok && result?.status === 'ready';
+        if (!stopped) setLiveCameraActivity(result?.activity ?? null);
+      } catch {
+        aiReady = false;
+      }
+
+      if (stopped) return;
+      if (aiReady) {
+        if (cameraSourceRef.current !== 'ai') setCameraImageLoaded(false);
+        cameraSourceRef.current = 'ai';
+        setCameraSource('ai');
+        setCameraConnected(true);
+        setCameraStreamFailed(false);
+        setCameraMessage('Camera AI của Pi đã sẵn sàng.');
+        return;
+      }
+
+      cameraSourceRef.current = 'none';
+      setCameraSource('none');
+      setCameraConnected(false);
+      setCameraImageLoaded(false);
+      setCameraMessage('Camera Pi chưa sẵn sàng hoặc đang bận. Mở kiosk bằng lối tắt BravoForest trên Pi; nếu ứng dụng Camera đang mở, hãy đóng rồi thử lại.');
+      setLiveCameraActivity(null);
+    };
     void checkCamera();
-    const cameraPoll = window.setInterval(() => void checkCamera(), 2500);
-    const imagePoll = window.setInterval(() => {
-      const currentImage = document.querySelector<HTMLImageElement>('.kiosk-camera-frame img');
-      if (currentImage?.naturalWidth) setCameraImageLoaded(true);
-    }, 250);
+    const cameraPoll = window.setInterval(() => void checkCamera(), 1000);
     return () => {
       stopped = true;
       window.clearInterval(cameraPoll);
-      window.clearInterval(imagePoll);
     };
-  }, []);
+  }, [cameraRetry]);
 
   useEffect(() => {
     if (!cameraStreamFailed) return;
@@ -912,10 +961,29 @@ export default function Kiosk() {
   }, [step]);
 
   const progressIndex = Math.min(step, 5);
+  const liveActivityIsPending = Boolean(liveCameraActivity && ['PROCESSING', 'SORTING', 'SYNCING'].includes(liveCameraActivity.status));
+  const liveActivityClass = liveCameraActivity?.status === 'HARDWARE_ERROR'
+    ? 'hardware-error'
+    : liveCameraActivity?.status === 'REJECTED_AI' ? 'rejected' : 'processing';
+  const liveActivityResult = liveCameraActivity?.status === 'HARDWARE_ERROR'
+    ? 'Lỗi thiết bị'
+    : liveCameraActivity?.status === 'REJECTED_AI' ? 'Không hợp lệ' : 'Đang xử lý';
+  const liveActivityRow = liveCameraActivity ? (
+    <div className={'activity-row ' + liveActivityClass} key={liveCameraActivity.id}>
+      <span className={'activity-indicator' + (liveActivityIsPending ? ' activity-spinner' : '')} aria-hidden="true">
+        {!liveActivityIsPending && <svg viewBox="0 0 16 16"><path d={liveCameraActivity.status === 'HARDWARE_ERROR' ? 'M8 3v6m0 3v1' : 'm4 4 8 8m0-8-8 8'} /></svg>}
+      </span>
+      <span className="activity-description">
+        <span className="activity-type">{aiClassLabel(liveCameraActivity.aiClass)}</span>
+        <small className="activity-meta">AI: {aiClassLabel(liveCameraActivity.aiClass)} · {Math.round(liveCameraActivity.confidence * 100)}% · {liveCameraActivity.message}</small>
+      </span>
+      <span className="activity-result"><strong>{liveActivityResult}</strong></span>
+    </div>
+  ) : null;
   const recentActivityRows = recentFeed.map((item) => (
-    <div key={item.id} className={'activity-row ' + (item.accepted ? 'accepted' : 'rejected')}>
+    <div key={item.id} className={'activity-row ' + item.result}>
       <span className="activity-indicator" aria-hidden="true">
-        <svg viewBox="0 0 16 16"><path d={item.accepted ? 'm3 8 3 3 7-7' : 'm4 4 8 8m0-8-8 8'} /></svg>
+        <svg viewBox="0 0 16 16"><path d={item.accepted ? 'm3 8 3 3 7-7' : item.result === 'hardware-error' ? 'M8 3v6m0 3v1' : 'm4 4 8 8m0-8-8 8'} /></svg>
       </span>
       <span className="activity-description">
         <span className="activity-type">{item.type}</span>
@@ -926,7 +994,7 @@ export default function Kiosk() {
         </small>
       </span>
       <span className="activity-result">
-        <strong>{item.accepted ? 'Hợp lệ' : 'Không hợp lệ'}</strong>
+        <strong>{item.accepted ? 'Hợp lệ' : item.result === 'hardware-error' ? 'Lỗi thiết bị' : 'Không hợp lệ'}</strong>
         {item.accepted && <small>+{item.points} điểm</small>}
       </span>
     </div>
@@ -1180,13 +1248,14 @@ export default function Kiosk() {
                     <h2>Hoạt động gần đây</h2>
                     <span>{items} đã nhận</span>
                   </div>
-                  {recentFeed.length === 0 ? (
+                  {!liveActivityRow && recentFeed.length === 0 ? (
                     <div className="activity-empty">
                       <span className="empty-tray" aria-hidden="true" />
                       <p>Chưa có kết quả AI. Kết quả hợp lệ hoặc bị từ chối sẽ hiện tại đây.</p>
                     </div>
                   ) : (
                     <div className="activity-list" aria-live="polite">
+                      {liveActivityRow}
                       {recentActivityRows}
                     </div>
                   )}
@@ -1324,26 +1393,42 @@ export default function Kiosk() {
               <strong>Camera AI trực tiếp</strong>
             </div>
             <span className={'kiosk-camera-status' + (cameraConnected && cameraImageLoaded && !cameraStreamFailed ? ' is-live' : '')}>
-              <i aria-hidden="true" />{cameraConnected && cameraImageLoaded && !cameraStreamFailed ? 'TRỰC TIẾP' : 'ĐANG KẾT NỐI'}
+              <i aria-hidden="true" />{cameraConnected && cameraImageLoaded && !cameraStreamFailed ? 'AI TRỰC TIẾP' : 'ĐANG KẾT NỐI'}
             </span>
           </div>
           <div className="kiosk-camera-frame">
-            <img
-              key={cameraRetry}
-              className={cameraConnected && cameraImageLoaded && !cameraStreamFailed ? 'is-connected' : 'is-connecting'}
-              src={`http://127.0.0.1:8765/stream.mjpg?retry=${cameraRetry}`}
-              alt="Hình ảnh trực tiếp từ camera máy RVM"
-              crossOrigin="anonymous"
-              onLoad={() => setCameraImageLoaded(true)}
-              onError={() => {
-                setCameraImageLoaded(false);
-                setCameraStreamFailed(true);
-              }}
-            />
+            {cameraSource === 'ai' ? (
+              <img
+                key={cameraRetry}
+                className={cameraConnected && cameraImageLoaded && !cameraStreamFailed ? 'is-connected' : 'is-connecting'}
+                src={`http://127.0.0.1:8765/stream.mjpg?retry=${cameraRetry}`}
+                alt="Hình ảnh trực tiếp từ camera AI của máy RVM"
+                crossOrigin="anonymous"
+                onLoad={() => {
+                  setCameraImageLoaded(true);
+                  setCameraStreamFailed(false);
+                }}
+                onError={() => {
+                  setCameraImageLoaded(false);
+                  setCameraStreamFailed(true);
+                }}
+              />
+            ) : null}
             {(!cameraConnected || !cameraImageLoaded || cameraStreamFailed) && (
               <div className="kiosk-camera-placeholder" role="status">
                 <span className="kiosk-camera-spinner" aria-hidden="true" />
-                <span>Đang kết nối camera…</span>
+                <span>{cameraMessage}</span>
+                <button
+                  type="button"
+                  className="kiosk-camera-retry"
+                  onClick={() => {
+                    setCameraMessage('Đang kiểm tra lại camera AI…');
+                    setCameraStreamFailed(false);
+                    setCameraRetry((attempt) => attempt + 1);
+                  }}
+                >
+                  Thử kết nối lại
+                </button>
               </div>
             )}
           </div>

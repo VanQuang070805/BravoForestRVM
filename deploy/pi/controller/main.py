@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 import cv2
@@ -27,6 +27,7 @@ from ultralytics import YOLO
 
 LOG = logging.getLogger("bravoforest-controller")
 VALID_LABELS = {"clean_pet": "PET", "can": "CAN"}
+CONTAINER_LABELS = {"clean_pet", "dirty_pet", "can"}
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -46,12 +47,15 @@ class Config:
     model_path: Path
     serial_port: str
     serial_baud: int
+    arduino_protocol: str
     camera_backend: str
+    camera_device: str
     camera_index: int
     camera_width: int
     camera_height: int
     confidence: float
     image_size: int
+    inference_fps: float
     stable_frames: int
     clear_frames: int
     show_preview: bool
@@ -79,15 +83,18 @@ class Config:
             api_key=os.getenv("RVM_API_KEY", "").strip(),
             pet_rule_id=0 if camera_only else int(os.getenv("PET_RULE_ID", "0")),
             can_rule_id=0 if camera_only else int(os.getenv("CAN_RULE_ID", "0")),
-            model_path=configured_path("MODEL_PATH", pi_dir / "models" / "best.pt"),
+            model_path=configured_path("MODEL_PATH", pi_dir / "models" / "best_ncnn_model"),
             serial_port=os.getenv("ARDUINO_SERIAL_PORT", "auto").strip(),
             serial_baud=int(os.getenv("ARDUINO_SERIAL_BAUD", "115200")),
-            camera_backend=os.getenv("CAMERA_BACKEND", "opencv").strip().lower(),
+            arduino_protocol=os.getenv("ARDUINO_PROTOCOL", "bravoforest").strip().lower(),
+            camera_backend=os.getenv("CAMERA_BACKEND", "picamera2").strip().lower(),
+            camera_device=os.getenv("CAMERA_DEVICE", "").strip(),
             camera_index=int(os.getenv("CAMERA_INDEX", "0")),
-            camera_width=int(os.getenv("CAMERA_WIDTH", "1280")),
-            camera_height=int(os.getenv("CAMERA_HEIGHT", "720")),
+            camera_width=int(os.getenv("CAMERA_WIDTH", "640")),
+            camera_height=int(os.getenv("CAMERA_HEIGHT", "480")),
             confidence=float(os.getenv("AI_CONFIDENCE", "0.70")),
-            image_size=int(os.getenv("AI_IMAGE_SIZE", "640")),
+            image_size=int(os.getenv("AI_IMAGE_SIZE", "320")),
+            inference_fps=float(os.getenv("AI_INFERENCE_FPS", "3")),
             stable_frames=int(os.getenv("AI_STABLE_FRAMES", "5")),
             clear_frames=int(os.getenv("AI_CLEAR_FRAMES", "8")),
             show_preview=env_bool("SHOW_AI_PREVIEW"),
@@ -115,12 +122,21 @@ class Config:
                 errors.append("Cần cấu hình ít nhất một rule bao bì đang hoạt động")
             elif self.pet_rule_id > 0 and self.pet_rule_id == self.can_rule_id:
                 errors.append("PET_RULE_ID và CAN_RULE_ID phải là hai quy tắc khác nhau trong cơ sở dữ liệu")
-        if not self.model_path.is_file():
+        if not self.model_path.exists():
             errors.append(f"Không tìm thấy model: {self.model_path}")
+        elif self.model_path.is_dir() and not all(
+            (self.model_path / name).is_file()
+            for name in ("model.ncnn.param", "model.ncnn.bin", "metadata.yaml")
+        ):
+            errors.append(f"Thư mục NCNN không đầy đủ: {self.model_path}")
         if self.camera_backend not in {"opencv", "picamera2"}:
             errors.append("CAMERA_BACKEND chỉ nhận opencv hoặc picamera2")
+        if self.arduino_protocol not in {"bravoforest", "legacy"}:
+            errors.append("ARDUINO_PROTOCOL chỉ nhận bravoforest hoặc legacy")
         if not 0.0 < self.confidence <= 1.0:
             errors.append("AI_CONFIDENCE phải nằm trong khoảng (0, 1]")
+        if not 0.5 <= self.inference_fps <= 10.0:
+            errors.append("AI_INFERENCE_FPS phải nằm trong khoảng 0.5-10")
         if self.stable_frames < 1 or self.clear_frames < 1:
             errors.append("AI_STABLE_FRAMES và AI_CLEAR_FRAMES phải lớn hơn 0")
         if self.preview_mode not in {"none", "opencv", "web"}:
@@ -132,10 +148,11 @@ class Config:
 
 
 class WebPreview:
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, state_provider: Callable[[], dict[str, Any]] | None = None) -> None:
         self.condition = threading.Condition()
         self.jpeg: bytes | None = None
         self.updated_at = 0.0
+        self.state_provider = state_provider
         preview = self
 
         class PreviewHandler(BaseHTTPRequestHandler):
@@ -145,10 +162,13 @@ class WebPreview:
                     with preview.condition:
                         frame_age_ms = int((time.monotonic() - preview.updated_at) * 1000) if preview.jpeg else None
                     ready = frame_age_ms is not None and frame_age_ms < 10_000
-                    payload = json.dumps({
+                    response_body = {
                         "status": "ready" if ready else "starting",
                         "frameAgeMs": frame_age_ms,
-                    }).encode("utf-8")
+                    }
+                    if preview.state_provider:
+                        response_body.update(preview.state_provider())
+                    payload = json.dumps(response_body).encode("utf-8")
                     self.send_response(HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
                     self.send_header("Content-Length", str(len(payload)))
@@ -379,10 +399,11 @@ class PendingEventStore:
 
 
 class ArduinoLink:
-    def __init__(self, port: str, baud: int) -> None:
+    def __init__(self, port: str, baud: int, protocol: str) -> None:
         resolved_port = self._auto_port() if port.lower() == "auto" else port
         LOG.info("Mở Arduino tại %s (%d baud)", resolved_port, baud)
         self.serial = serial.Serial(resolved_port, baudrate=baud, timeout=0, write_timeout=1)
+        self.protocol = protocol
         self.buffer = bytearray()
         time.sleep(2.0)  # Most Arduino boards reset when the serial port is opened.
 
@@ -406,6 +427,27 @@ class ArduinoLink:
         self.serial.write(f"{command}\n".encode("ascii"))
         self.serial.flush()
 
+    def stop(self) -> None:
+        self.send("MOTOR:STOP" if self.protocol == "legacy" else "STOP")
+
+    def accept(self, object_type: str) -> None:
+        if self.protocol == "legacy":
+            self.send("MOTOR:FORWARD")
+            return
+        self.send(f"ACCEPT {object_type}")
+
+    def sort_legacy(self, object_type: str) -> None:
+        if self.protocol != "legacy":
+            raise RuntimeError("Lệnh phân loại cảm biến chỉ dùng với Arduino legacy")
+        # Theo lắp đặt thực tế: chai sang trái 180°, lon sang phải 180°.
+        self.send("SERVO:LEFT" if object_type == "PET" else "SERVO:RIGHT")
+
+    def reject(self) -> None:
+        self.send("MOTOR:REVERSE" if self.protocol == "legacy" else "REJECT")
+
+    def clear(self) -> None:
+        self.send("MOTOR:STOP" if self.protocol == "legacy" else "CLEAR")
+
     def read_lines(self) -> list[str]:
         waiting = self.serial.in_waiting
         if waiting:
@@ -422,7 +464,7 @@ class ArduinoLink:
     def close(self) -> None:
         if self.serial.is_open:
             try:
-                self.send("STOP")
+                self.stop()
             finally:
                 self.serial.close()
 
@@ -438,24 +480,30 @@ class Camera:
                 raise RuntimeError(
                     "Thiếu Picamera2. Cài bằng: sudo apt install python3-picamera2"
                 ) from error
-            camera = Picamera2()
-            camera.configure(camera.create_preview_configuration(
-                main={"format": "RGB888", "size": (config.camera_width, config.camera_height)}
+            camera = Picamera2(camera_num=config.camera_index)
+            camera.configure(camera.create_video_configuration(
+                main={"format": "RGB888", "size": (config.camera_width, config.camera_height)},
+                controls={"FrameRate": 30.0},
+                buffer_count=2,
             ))
             camera.start()
             self.capture = camera
         else:
-            capture = cv2.VideoCapture(config.camera_index)
+            source: str | int = config.camera_device or config.camera_index
+            capture = cv2.VideoCapture(source, cv2.CAP_V4L2)
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.camera_width)
             capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.camera_height)
+            capture.set(cv2.CAP_PROP_FPS, 30)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             if not capture.isOpened():
-                raise RuntimeError(f"Không mở được camera index {config.camera_index}")
+                raise RuntimeError(f"Không mở được camera {source}")
             self.capture = capture
 
     def read(self) -> Any:
         if self.backend == "picamera2":
-            rgb_frame = self.capture.capture_array()
-            return cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+            # Picamera2's RGB888 capture_array is already BGR ordered for OpenCV.
+            return self.capture.capture_array()
         ok, frame = self.capture.read()
         if not ok:
             raise RuntimeError("Camera không trả về frame")
@@ -466,6 +514,54 @@ class Camera:
             self.capture.stop()
         else:
             self.capture.release()
+
+
+class LatestFrameReader:
+    """Continuously capture and retain only the newest camera frame."""
+
+    def __init__(self, camera: Camera) -> None:
+        self.camera = camera
+        self.condition = threading.Condition()
+        self.stopped = threading.Event()
+        self.frame: Any | None = None
+        self.sequence = 0
+        self.error: Exception | None = None
+        self.thread = threading.Thread(target=self._capture, name="latest-camera-frame", daemon=True)
+        self.thread.start()
+
+    def _capture(self) -> None:
+        try:
+            while not self.stopped.is_set():
+                frame = self.camera.read()
+                with self.condition:
+                    self.frame = frame
+                    self.sequence += 1
+                    self.condition.notify_all()
+        except Exception as error:
+            with self.condition:
+                self.error = error
+                self.condition.notify_all()
+
+    def latest(self, after_sequence: int, timeout: float = 1.0) -> tuple[Any | None, int]:
+        with self.condition:
+            self.condition.wait_for(
+                lambda: self.error is not None or (self.frame is not None and self.sequence != after_sequence),
+                timeout=timeout,
+            )
+            if self.error is not None:
+                raise RuntimeError(f"Camera dừng đọc frame: {self.error}") from self.error
+            if self.frame is None or self.sequence == after_sequence:
+                return None, after_sequence
+            return self.frame.copy(), self.sequence
+
+    def snapshot(self) -> Any | None:
+        with self.condition:
+            return None if self.frame is None else self.frame.copy()
+
+    def close(self) -> None:
+        self.stopped.set()
+        self.thread.join(timeout=2.0)
+        self.camera.close()
 
 
 @dataclass
@@ -480,7 +576,7 @@ class VisionController:
         self.config = config
         self.api = None if config.camera_only else MachineApi(config)
         self.events = None if config.camera_only else PendingEventStore(config.state_db)
-        self.model = YOLO(str(config.model_path))
+        self.model = YOLO(str(config.model_path), task="detect")
         raw_names = self.model.names.values() if isinstance(self.model.names, dict) else self.model.names
         model_labels = {str(name).strip().lower() for name in raw_names}
         missing = set(VALID_LABELS) - model_labels
@@ -539,7 +635,10 @@ class VisionController:
                 else:
                     LOG.info("Không có rule %s đang hoạt động; controller sẽ từ chối vật liệu này", material)
 
-        self.arduino = None if config.camera_only or config.ai_only else ArduinoLink(config.serial_port, config.serial_baud)
+        self.arduino = (
+            None if config.camera_only or config.ai_only
+            else ArduinoLink(config.serial_port, config.serial_baud, config.arduino_protocol)
+        )
         try:
             self.camera = Camera(config)
         except Exception:
@@ -551,11 +650,51 @@ class VisionController:
         self.candidate_label: str | None = None
         self.candidate_frames = 0
         self.clear_frames = 0
+        self.hardware_action_until = 0.0
+        self.legacy_cycle_started_at = 0.0
+        self.ultrasonic_has_object = False
+        self.ultrasonic_since: float | None = None
+        self.ultrasonic_raw_state = False
+        self.ultrasonic_raw_since = time.monotonic()
+        self.proximity_has_can = False
+        self.proximity_activated_at: float | None = None
+        self.proximity_raw_state = False
+        self.proximity_raw_since = time.monotonic()
+        self.proximity_seen_during_gate = False
+        self.legacy_motor_stopped = True
         self.active_session_id: str | None = None
         self.active_session_status = "IDLE"
         self.finish_requested = False
         self.last_session_poll = 0.0
         self.last_queue_flush = 0.0
+        self.live_activity: dict[str, Any] | None = None
+        self.live_activity_until = 0.0
+
+    def preview_state(self) -> dict[str, Any]:
+        if self.live_activity and self.live_activity_until and time.monotonic() >= self.live_activity_until:
+            self.live_activity = None
+            self.live_activity_until = 0.0
+        return {"activity": self.live_activity}
+
+    def set_live_activity(
+        self,
+        status: str,
+        *,
+        label: str,
+        confidence: float,
+        message: str,
+        event_key: str | None = None,
+        expires_in: float = 0.0,
+    ) -> None:
+        self.live_activity = {
+            "id": event_key or f"ai-{int(time.time() * 1000)}",
+            "status": status,
+            "aiClass": label,
+            "confidence": round(float(confidence), 4),
+            "message": message,
+            "eventKey": event_key,
+        }
+        self.live_activity_until = time.monotonic() + expires_in if expires_in else 0.0
 
     def detect(self, frame: Any, *, render_preview: bool | None = None) -> tuple[Detection | None, Any]:
         result = self.model.predict(
@@ -566,7 +705,7 @@ class VisionController:
         )[0]
         if result.boxes is None:
             raise RuntimeError("best.pt không phải model object detection có bounding boxes")
-        best: Detection | None = None
+        candidates: list[Detection] = []
         detected_boxes: list[tuple[int, int, int, int, str, float]] = []
         for box in result.boxes:
             confidence = float(box.conf[0])
@@ -574,8 +713,13 @@ class VisionController:
             label = str(result.names[class_id]).strip().lower()
             x1, y1, x2, y2 = (int(round(value)) for value in box.xyxy[0].tolist())
             detected_boxes.append((x1, y1, x2, y2, label, confidence))
-            if best is None or confidence > best.confidence:
-                best = Detection(label, confidence)
+            candidates.append(Detection(label, confidence))
+        # A cap can be detected inside a complete bottle. Prefer a full
+        # container class whenever one exists, then choose the most confident
+        # result in that group.
+        container_candidates = [item for item in candidates if item.label in CONTAINER_LABELS]
+        ranked = container_candidates or candidates
+        best = max(ranked, key=lambda item: item.confidence, default=None)
         if best is not None:
             best.boxes = tuple(detected_boxes)
         needs_preview = (
@@ -593,10 +737,38 @@ class VisionController:
             return False
         if label == self.candidate_label:
             self.candidate_frames += 1
+        elif self.candidate_frames > 1:
+            # One noisy inference must not flip an already stable object.
+            self.candidate_frames -= 1
+            return False
         else:
             self.candidate_label = label
             self.candidate_frames = 1
-        return self.candidate_frames >= self.config.stable_frames
+        return label == self.candidate_label and self.candidate_frames >= self.config.stable_frames
+
+    def _update_legacy_sensor_states(self) -> None:
+        """Debounce noisy digital inputs before they can affect points."""
+        now = time.monotonic()
+        if self.ultrasonic_raw_state != self.ultrasonic_has_object and now - self.ultrasonic_raw_since >= 0.15:
+            self.ultrasonic_has_object = self.ultrasonic_raw_state
+            if self.ultrasonic_has_object:
+                self.ultrasonic_since = now
+                self.proximity_seen_during_gate = bool(
+                    self.proximity_activated_at is not None
+                    and now - self.proximity_activated_at <= 1.0
+                )
+            else:
+                self.ultrasonic_since = None
+                self.proximity_seen_during_gate = False
+            LOG.info("Cảm biến siêu âm ổn định: %s", int(self.ultrasonic_has_object))
+
+        if self.proximity_raw_state != self.proximity_has_can and now - self.proximity_raw_since >= 0.30:
+            self.proximity_has_can = self.proximity_raw_state
+            if self.proximity_has_can:
+                self.proximity_activated_at = now
+                if self.ultrasonic_has_object:
+                    self.proximity_seen_during_gate = True
+            LOG.info("Cảm biến kim loại ổn định: %s", int(self.proximity_has_can))
 
     def refresh_active_session(self) -> None:
         if self.api is None:
@@ -656,6 +828,13 @@ class VisionController:
             try:
                 self.api.record_item(event)
                 self.events.remove(str(event["idempotencyKey"]))
+                if (
+                    self.live_activity
+                    and self.live_activity.get("eventKey") == str(event["idempotencyKey"])
+                    and self.live_activity.get("status") == "SYNCING"
+                ):
+                    self.live_activity = None
+                    self.live_activity_until = 0.0
                 LOG.info("Đã đồng bộ vật phẩm vào phiên %s", event["sessionId"])
             except requests.RequestException as error:
                 LOG.warning("Chưa đồng bộ được vật phẩm, sẽ thử lại: %s", error)
@@ -667,6 +846,18 @@ class VisionController:
         for line in self.arduino.read_lines():
             LOG.info("ARDUINO -> PI: %s", line)
             parts = line.split()
+            if self.arduino.protocol == "legacy" and line.startswith("ULTRASONIC:"):
+                raw_state = line.endswith(":1")
+                if raw_state != self.ultrasonic_raw_state:
+                    self.ultrasonic_raw_state = raw_state
+                    self.ultrasonic_raw_since = time.monotonic()
+                continue
+            if self.arduino.protocol == "legacy" and line.startswith("PROXIMITY:"):
+                raw_state = line.endswith(":1")
+                if raw_state != self.proximity_raw_state:
+                    self.proximity_raw_state = raw_state
+                    self.proximity_raw_since = time.monotonic()
+                continue
             if line == "READY":
                 self.mode = "IDLE"
                 self.pending_object = None
@@ -674,15 +865,285 @@ class VisionController:
                 self.candidate_label = None
                 self.candidate_frames = 0
             elif len(parts) == 3 and parts[0] == "RESULT" and self.pending_object:
-                LOG.info(
-                    "Arduino hoàn tất chu trình %s (kết quả %s); quyết định hợp lệ đã do AI ghi nhận",
-                    parts[1], "đạt" if parts[2] == "1" else "không đạt",
-                )
+                pending = self.pending_object
+                reported_type = parts[1].upper()
+                expected_type = str(pending.get("objectType", "")).upper()
+                rule_id = int(pending.get("ruleId", 0))
+                mechanism_accepted = parts[2] == "1" and rule_id > 0 and reported_type == expected_type
+                if self.events is None:
+                    raise RuntimeError("Kho lưu sự kiện chưa được khởi tạo")
+                sensor_data = {
+                    "source": "pi-yolo-ai-arduino",
+                    "classificationSource": "CAMERA_AI_AND_ARDUINO",
+                    "aiClass": pending["label"],
+                    "aiConfidence": round(float(pending["confidence"]), 4),
+                    "aiObjectType": expected_type,
+                    "arduinoObjectType": reported_type,
+                    "mechanismCompleted": True,
+                    "classificationAccepted": mechanism_accepted,
+                }
+                if mechanism_accepted:
+                    event_key = self.events.add(str(pending["sessionId"]), rule_id, sensor_data)
+                    self.set_live_activity(
+                        "SYNCING", label=str(pending["label"]), confidence=float(pending["confidence"]),
+                        message="Đã phân loại xong, đang đồng bộ điểm.", event_key=event_key,
+                    )
+                    LOG.info("Arduino xác nhận hoàn tất %s; đã xếp hàng giao dịch hợp lệ", reported_type)
+                else:
+                    sensor_data["reason"] = "Arduino không xác nhận chu trình phân loại hợp lệ"
+                    event_key = self.events.add(
+                        str(pending["sessionId"]),
+                        None,
+                        sensor_data,
+                        reject_reason_id=self.reject_reason_ids["SENSOR_REJECTED"],
+                    )
+                    self.set_live_activity(
+                        "HARDWARE_ERROR", label=str(pending["label"]), confidence=float(pending["confidence"]),
+                        message="AI đã nhận diện nhưng cơ cấu không xác nhận đúng loại vật thể.",
+                        event_key=event_key, expires_in=12.0,
+                    )
+                    LOG.warning("Arduino không xác nhận vật phẩm %s; không cộng điểm", expected_type)
                 self.mode = "WAIT_CLEAR"
                 self.pending_object = None
             elif line.startswith("ERROR FEED_TIMEOUT") or line.startswith("ERROR REJECT_TIMEOUT"):
+                if self.pending_object and self.events is not None:
+                    event_key = self.events.add(
+                        str(self.pending_object["sessionId"]),
+                        None,
+                        {
+                            "source": "pi-yolo-ai-arduino",
+                            "classificationSource": "CAMERA_AI_AND_ARDUINO",
+                            "aiClass": self.pending_object["label"],
+                            "aiConfidence": round(float(self.pending_object["confidence"]), 4),
+                            "mechanismCompleted": False,
+                            "classificationAccepted": False,
+                            "reason": line,
+                        },
+                        reject_reason_id=self.reject_reason_ids["SENSOR_REJECTED"],
+                    )
+                    self.set_live_activity(
+                        "HARDWARE_ERROR", label=str(self.pending_object["label"]),
+                        confidence=float(self.pending_object["confidence"]),
+                        message="AI đã nhận diện nhưng cơ cấu chưa hoàn tất.",
+                        event_key=event_key, expires_in=12.0,
+                    )
                 self.mode = "WAIT_CLEAR"
                 self.pending_object = None
+
+        if self.arduino.protocol == "legacy":
+            self._update_legacy_sensor_states()
+
+        if (
+            self.arduino.protocol == "legacy" and self.mode == "SORTING"
+            and self.hardware_action_until > 0 and time.monotonic() >= self.hardware_action_until
+        ):
+            self.arduino.stop()
+            self.legacy_motor_stopped = True
+            if self.pending_object is not None and self.events is not None:
+                pending = self.pending_object
+                rule_id = int(pending.get("ruleId", 0))
+                sensor_data = {
+                    "source": "pi-arduino-sensors",
+                    "classificationSource": "CAMERA_AI_AND_ARDUINO",
+                    "aiClass": pending["label"],
+                    "aiConfidence": round(float(pending["confidence"]), 4),
+                    "ultrasonicConfirmed": True,
+                    "proximityDetectedCan": bool(pending.get("proximityDetectedCan")),
+                    "aiObjectType": pending.get("objectType"),
+                    "sensorObjectType": pending.get("sensorObjectType"),
+                    "sensorConsistent": bool(pending.get("sensorConsistent")),
+                    "mechanismCompleted": True,
+                    "classificationAccepted": rule_id > 0 and bool(pending.get("classificationConfirmed")),
+                }
+                if rule_id > 0 and bool(pending.get("classificationConfirmed")):
+                    event_key = self.events.add(str(pending["sessionId"]), rule_id, sensor_data)
+                    self.set_live_activity(
+                        "SYNCING", label=str(pending["label"]), confidence=float(pending["confidence"]),
+                        message="Đã phân loại xong, đang đồng bộ điểm.", event_key=event_key,
+                    )
+                    LOG.info("Cơ cấu legacy hoàn tất %s; đã xếp hàng giao dịch", pending.get("objectType"))
+                else:
+                    sensor_data["reason"] = (
+                        "AI nhận lon nhưng cảm biến kim loại không xác nhận"
+                        if not pending.get("classificationConfirmed")
+                        else f"Chưa có rule {pending.get('objectType')} đang hoạt động"
+                    )
+                    event_key = self.events.add(
+                        str(pending["sessionId"]),
+                        None,
+                        sensor_data,
+                        reject_reason_id=self.reject_reason_ids["SENSOR_REJECTED"],
+                    )
+                    self.set_live_activity(
+                        "HARDWARE_ERROR", label=str(pending["label"]), confidence=float(pending["confidence"]),
+                        message=str(sensor_data["reason"]), event_key=event_key, expires_in=12.0,
+                    )
+            self.mode = "IDLE" if self.finish_requested else "WAIT_CLEAR"
+            self.pending_object = None
+            self.hardware_action_until = 0.0
+
+    def start_legacy_cycle(self, detection: Detection, object_type: str | None, rule_id: int) -> None:
+        if self.arduino is None or self.events is None or self.active_session_id is None:
+            return
+        now = time.monotonic()
+        self.clear_frames = 0
+        self.legacy_cycle_started_at = now
+        self.ultrasonic_since = now if self.ultrasonic_has_object else None
+        self.proximity_seen_during_gate = bool(
+            self.ultrasonic_has_object
+            and self.proximity_activated_at is not None
+            and now - self.proximity_activated_at <= 1.0
+        )
+        self.candidate_label = None
+        self.candidate_frames = 0
+
+        if object_type and rule_id > 0:
+            self.pending_object = {
+                "label": detection.label,
+                "confidence": detection.confidence,
+                "sessionId": self.active_session_id,
+                "objectType": object_type,
+                "ruleId": rule_id,
+            }
+            self.arduino.accept(object_type)
+            self.legacy_motor_stopped = False
+            self.mode = "FEEDING"
+            self.set_live_activity(
+                "PROCESSING", label=detection.label, confidence=detection.confidence,
+                message=f"AI đã xác nhận {object_type}; đang chờ cảm biến và cơ cấu.",
+            )
+            LOG.info("AI cho vật hợp lệ đi vào: %s (%.3f)", detection.label, detection.confidence)
+            return
+
+        reason = f"AI từ chối vật thể: {detection.label}"
+        event_key = self.events.add(
+            self.active_session_id,
+            None,
+            {
+                "source": "pi-yolo-ai",
+                "classificationSource": "CAMERA_AI",
+                "aiClass": detection.label,
+                "aiConfidence": round(float(detection.confidence), 4),
+                "classificationAccepted": False,
+                "reason": reason,
+            },
+            reject_reason_id=self.reject_reason_ids["UNSUPPORTED_MATERIAL"],
+        )
+        self.set_live_activity(
+            "REJECTED_AI", label=detection.label, confidence=detection.confidence,
+            message="AI xác định vật thể không thuộc loại máy hỗ trợ.", event_key=event_key, expires_in=8.0,
+        )
+        self.pending_object = None
+        self.arduino.reject()
+        self.legacy_motor_stopped = False
+        self.mode = "REJECTING"
+        LOG.info("AI trả ngược vật không hợp lệ: %s", detection.label)
+
+    def finish_legacy_sensor_sort(self) -> None:
+        if self.arduino is None or self.events is None or self.pending_object is None:
+            return
+        # The model selects the material/rule. Ultrasonic confirms that the
+        # physical object reached the gate. Metal sensing confirms CAN, but can
+        # never change an AI clean_pet result into the CAN rule.
+        object_type = str(self.pending_object["objectType"])
+        sensor_type = "CAN" if self.proximity_seen_during_gate else "PET"
+        rule_id = int(self.pending_object["ruleId"])
+        sensor_consistent = object_type == sensor_type
+        classification_confirmed = object_type == "PET" or self.proximity_seen_during_gate
+        self.pending_object["proximityDetectedCan"] = self.proximity_seen_during_gate
+        self.pending_object["sensorObjectType"] = sensor_type
+        self.pending_object["sensorConsistent"] = sensor_consistent
+        self.pending_object["classificationConfirmed"] = classification_confirmed
+        self.arduino.stop()
+        self.legacy_motor_stopped = True
+        if classification_confirmed:
+            self.arduino.sort_legacy(object_type)
+        else:
+            self.arduino.reject()
+        self.ultrasonic_since = None
+        self.proximity_seen_during_gate = False
+        self.mode = "SORTING"
+        self.set_live_activity(
+            "SORTING", label=str(self.pending_object["label"]),
+            confidence=float(self.pending_object["confidence"]),
+            message=f"Đã nhận {object_type}; cơ cấu đang phân loại.",
+        )
+        self.hardware_action_until = time.monotonic() + 1.3
+        LOG.info(
+            "AI=%s, cảm biến=%s, đủ điều kiện=%s; chờ cơ cấu hoàn tất",
+            object_type,
+            sensor_type,
+            classification_confirmed,
+        )
+
+    def handle_legacy_cycle(self, detection: Detection | None) -> None:
+        if self.arduino is None:
+            return
+        now = time.monotonic()
+
+        if self.mode == "FEEDING":
+            if self.ultrasonic_has_object:
+                if self.ultrasonic_since is None:
+                    self.ultrasonic_since = now
+                if now - self.ultrasonic_since >= 1.0:
+                    self.finish_legacy_sensor_sort()
+                    return
+            else:
+                self.ultrasonic_since = None
+
+            camera_accepts_object = bool(detection and detection.label in VALID_LABELS)
+            if not camera_accepts_object:
+                self.clear_frames += 1
+                if self.clear_frames >= self.config.clear_frames and not self.legacy_motor_stopped:
+                    self.arduino.stop()
+                    self.legacy_motor_stopped = True
+            else:
+                self.clear_frames = 0
+                if self.legacy_motor_stopped:
+                    self.arduino.accept(VALID_LABELS[detection.label])
+                    self.legacy_motor_stopped = False
+
+            if now - self.legacy_cycle_started_at >= 10.0:
+                self.arduino.stop()
+                self.legacy_motor_stopped = True
+                if self.pending_object is not None and self.events is not None:
+                    event_key = self.events.add(
+                        str(self.pending_object["sessionId"]),
+                        None,
+                        {
+                            "source": "pi-arduino-sensors",
+                            "classificationSource": "CAMERA_AI_AND_ARDUINO",
+                            "aiClass": self.pending_object["label"],
+                            "aiConfidence": round(float(self.pending_object["confidence"]), 4),
+                            "classificationAccepted": False,
+                            "reason": "Cảm biến siêu âm không xác nhận vật thể trong 10 giây",
+                        },
+                        reject_reason_id=self.reject_reason_ids["SENSOR_REJECTED"],
+                    )
+                    self.set_live_activity(
+                        "HARDWARE_ERROR", label=str(self.pending_object["label"]),
+                        confidence=float(self.pending_object["confidence"]),
+                        message="AI đã nhận diện nhưng cảm biến siêu âm chưa xác nhận vật thể.",
+                        event_key=event_key, expires_in=12.0,
+                    )
+                self.pending_object = None
+                self.mode = "IDLE" if self.finish_requested else "WAIT_CLEAR"
+            return
+
+        if self.mode == "REJECTING":
+            if self.finish_requested:
+                self.arduino.stop()
+                self.legacy_motor_stopped = True
+                self.mode = "IDLE"
+                self.clear_frames = 0
+                return
+            self.clear_frames = self.clear_frames + 1 if detection is None else 0
+            expired = now - self.legacy_cycle_started_at >= 6.0
+            if self.clear_frames >= self.config.clear_frames or expired:
+                self.arduino.stop()
+                self.legacy_motor_stopped = True
+                self.mode = "IDLE" if expired or self.finish_requested else "WAIT_CLEAR"
+                self.clear_frames = 0
 
     def handle_idle_detection(self, detection: Detection | None, stable: bool) -> None:
         if not detection or not stable:
@@ -695,6 +1156,17 @@ class VisionController:
             else 0
         )
         has_active_rule = rule_id > 0
+        if self.arduino is not None and self.arduino.protocol == "legacy":
+            if (
+                self.active_session_id and self.active_session_status == "DEPOSITING"
+                and not self.finish_requested
+            ):
+                self.start_legacy_cycle(detection, object_type, rule_id)
+            else:
+                LOG.info("AI nhận diện %s nhưng chưa có phiên DEPOSITING; motor giữ dừng", detection.label)
+                self.candidate_label = None
+                self.candidate_frames = 0
+            return
         if (
             object_type and has_active_rule and self.active_session_id
             and self.active_session_status == "DEPOSITING" and not self.finish_requested
@@ -704,21 +1176,19 @@ class VisionController:
                 "objectType": object_type,
                 "confidence": detection.confidence,
                 "sessionId": self.active_session_id,
+                "ruleId": rule_id,
             }
-            if self.events is None:
-                raise RuntimeError("Kho lưu sự kiện chưa được khởi tạo")
-            key = self.events.add(str(self.active_session_id), rule_id, {
-                "source": "pi-yolo-ai",
-                "classificationSource": "CAMERA_AI",
-                "aiClass": detection.label,
-                "aiConfidence": round(float(detection.confidence), 4),
-                "classificationAccepted": True,
-            })
             if self.arduino is None:
                 raise RuntimeError("Arduino chưa được khởi tạo")
-            self.arduino.send(f"ACCEPT {object_type}")
+            self.arduino.accept(object_type)
             self.mode = "ACCEPTING"
-            LOG.info("AI chấp nhận %s, confidence %.3f; đã xếp hàng giao dịch %s", detection.label, detection.confidence, key)
+            if self.arduino.protocol == "legacy":
+                self.hardware_action_until = time.monotonic() + 1.5
+            LOG.info(
+                "AI chấp nhận %s, confidence %.3f; chờ Arduino xác nhận hoàn tất trước khi ghi giao dịch",
+                detection.label,
+                detection.confidence,
+            )
         else:
             if object_type is None:
                 reason = f"class không hợp lệ: {detection.label}"
@@ -750,8 +1220,10 @@ class VisionController:
             self.pending_object = None
             if self.arduino is None:
                 raise RuntimeError("Arduino chưa được khởi tạo")
-            self.arduino.send("REJECT")
+            self.arduino.reject()
             self.mode = "REJECTING"
+            if self.arduino.protocol == "legacy":
+                self.hardware_action_until = time.monotonic() + 1.2
 
         self.candidate_label = None
         self.candidate_frames = 0
@@ -798,6 +1270,14 @@ class VisionController:
         self.candidate_frames = 0
 
     def handle_clear_detection(self, detection: Detection | None) -> None:
+        if self.finish_requested:
+            if self.arduino is None:
+                raise RuntimeError("Arduino chưa được khởi tạo")
+            self.arduino.stop()
+            self.mode = "IDLE"
+            self.pending_object = None
+            self.clear_frames = 0
+            return
         if detection is None:
             self.clear_frames += 1
         else:
@@ -805,8 +1285,8 @@ class VisionController:
         if self.clear_frames >= self.config.clear_frames:
             if self.arduino is None:
                 raise RuntimeError("Arduino chưa được khởi tạo")
-            self.arduino.send("CLEAR")
-            self.mode = "CLEARING"
+            self.arduino.clear()
+            self.mode = "IDLE" if self.arduino.protocol == "legacy" else "CLEARING"
             self.clear_frames = 0
 
     def run(self) -> None:
@@ -815,9 +1295,69 @@ class VisionController:
             return
         if self.arduino is None:
             raise RuntimeError("Arduino chưa được khởi tạo")
-        self.arduino.send("STOP")
-        web_preview = WebPreview(self.config.preview_port) if self.config.preview_mode == "web" else None
-        LOG.info("Controller sẵn sàng. Nhấn Ctrl+C để dừng an toàn.")
+        self.arduino.stop()
+        web_preview = WebPreview(self.config.preview_port, self.preview_state) if self.config.preview_mode == "web" else None
+        frames = LatestFrameReader(self.camera)
+        sequence = 0
+        inference_interval = 1.0 / self.config.inference_fps
+        next_inference_at = 0.0
+        preview_stopped = threading.Event()
+        preview_lock = threading.Lock()
+        preview_detection: dict[str, Any] = {
+            "boxes": (),
+            "label": "none",
+            "confidence": 0.0,
+            "updated_at": 0.0,
+        }
+
+        def render_live_preview() -> None:
+            if web_preview is None:
+                return
+            while not preview_stopped.wait(0.1):
+                preview_frame = frames.snapshot()
+                if preview_frame is None:
+                    continue
+                with preview_lock:
+                    boxes = preview_detection["boxes"]
+                    label = preview_detection["label"]
+                    confidence = preview_detection["confidence"]
+                    detection_age = time.monotonic() - preview_detection["updated_at"]
+                if detection_age <= 2.5:
+                    for x1, y1, x2, y2, box_label, box_confidence in boxes:
+                        color = (65, 210, 105) if box_label in VALID_LABELS else (0, 190, 255)
+                        cv2.rectangle(preview_frame, (x1, y1), (x2, y2), color, 2)
+                        cv2.putText(
+                            preview_frame,
+                            f"{box_label.upper()} {box_confidence:.2f}",
+                            (x1, max(22, y1 - 7)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                            cv2.LINE_AA,
+                        )
+                cv2.putText(
+                    preview_frame,
+                    f"{self.mode} | {label} {confidence:.2f}",
+                    (14, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0) if label in VALID_LABELS else (0, 190, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                web_preview.update(preview_frame)
+
+        preview_thread = threading.Thread(
+            target=render_live_preview,
+            name="camera-live-preview",
+            daemon=True,
+        )
+        preview_thread.start()
+        LOG.info(
+            "Controller sẵn sàng: %.1f lần suy luận/giây, chỉ xử lý frame mới nhất.",
+            self.config.inference_fps,
+        )
         try:
             while True:
                 self.process_arduino()
@@ -825,17 +1365,49 @@ class VisionController:
                 self.flush_events()
                 self.finalize_if_ready()
 
-                frame = self.camera.read()
-                detection, annotated = self.detect(frame)
+                session_accepts_items = bool(
+                    self.active_session_id
+                    and self.active_session_status == "DEPOSITING"
+                    and not self.finish_requested
+                )
+                needs_detection = (
+                    (session_accepts_items and self.mode == "IDLE")
+                    or self.mode in {"FEEDING", "REJECTING", "WAIT_CLEAR"}
+                )
+                if not needs_detection:
+                    if web_preview:
+                        with preview_lock:
+                            preview_detection["boxes"] = ()
+                            preview_detection["label"] = "none"
+                            preview_detection["confidence"] = 0.0
+                            preview_detection["updated_at"] = time.monotonic()
+                    time.sleep(0.05)
+                    continue
+
+                now = time.monotonic()
+                if now < next_inference_at:
+                    time.sleep(min(0.02, next_inference_at - now))
+                    continue
+                frame, sequence = frames.latest(sequence, timeout=0.25)
+                if frame is None:
+                    continue
+                next_inference_at = time.monotonic() + inference_interval
+                detection, annotated = self.detect(frame, render_preview=self.config.show_preview)
+                if web_preview:
+                    with preview_lock:
+                        preview_detection["boxes"] = detection.boxes if detection else ()
+                        preview_detection["label"] = detection.label if detection else "none"
+                        preview_detection["confidence"] = detection.confidence if detection else 0.0
+                        preview_detection["updated_at"] = time.monotonic()
                 stable = self.update_candidate(detection) if self.mode == "IDLE" else False
 
                 if self.mode == "IDLE":
                     self.handle_idle_detection(detection, stable)
-                elif self.mode in {"REJECTING", "WAIT_CLEAR"}:
+                elif self.arduino.protocol == "legacy" and self.mode in {"FEEDING", "REJECTING"}:
+                    self.handle_legacy_cycle(detection)
+                elif self.mode == "WAIT_CLEAR":
                     self.handle_clear_detection(detection)
 
-                if web_preview:
-                    web_preview.update(annotated)
                 if self.config.show_preview:
                     label = detection.label if detection else "none"
                     cv2.putText(annotated, f"{self.mode} | {label}", (20, 35),
@@ -844,8 +1416,10 @@ class VisionController:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
         finally:
+            preview_stopped.set()
+            preview_thread.join(timeout=2.0)
             self.arduino.close()
-            self.camera.close()
+            frames.close()
             if web_preview:
                 web_preview.close()
             cv2.destroyAllWindows()
@@ -857,6 +1431,8 @@ class VisionController:
             LOG.info("Đang chạy CAMERA_ONLY: chỉ xem camera/model, không ghi dữ liệu API")
         last_logged_label: str | None = None
         last_log_at = 0.0
+        inference_interval = 1.0 / self.config.inference_fps
+        next_inference_at = 0.0
         web_preview = WebPreview(self.config.preview_port) if self.config.preview_mode == "web" else None
         if web_preview:
             condition = threading.Condition()
@@ -952,6 +1528,11 @@ class VisionController:
                     self.flush_events()
                     self.finalize_if_ready()
 
+                now = time.monotonic()
+                if now < next_inference_at:
+                    time.sleep(min(0.02, next_inference_at - now))
+                    continue
+
                 if web_preview:
                     with condition:
                         condition.wait_for(
@@ -964,6 +1545,7 @@ class VisionController:
                         sequence = latest["sequence"]
                 else:
                     frame = self.camera.read()
+                next_inference_at = time.monotonic() + inference_interval
 
                 render_camera_preview = bool(
                     not web_preview

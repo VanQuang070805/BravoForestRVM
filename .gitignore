@@ -38,3 +38,17 @@ Thumbs.db
 # Test artifacts
 playwright-report/
 test-results/
+
+# Local agent, browser, and generated working artifacts
+.agent/
+.agents/
+.gemini/
+.impeccable/
+.playwright-cli/
+.chart-data-*/
+.codex-build/
+output/
+tmp/
+
+# Obsolete destructive demo seed; real deployments use the minimal seeds.
+database/seed_operational_demo.sql

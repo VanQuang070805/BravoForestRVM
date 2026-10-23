@@ -8,8 +8,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,worker,customer,admin,kiosk -c green,blue,cyan,magenta,yellow \"npm run start:dev -w @bravoforest/api\" \"npm run worker:dev -w @bravoforest/api\" \"npm run dev -w @bravoforest/customer-web\" \"npm run dev -w @bravoforest/admin-web\" \"npm run dev -w @bravoforest/rvm-kiosk\"",
-    "dev:management": "concurrently -n api,worker,customer,admin -c green,blue,cyan,magenta \"npm run start:dev -w @bravoforest/api\" \"npm run worker:dev -w @bravoforest/api\" \"npm run dev -w @bravoforest/customer-web\" \"npm run dev -w @bravoforest/admin-web\"",
+    "predev": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy/management/prepare-dev.ps1",
+    "dev": "concurrently -n api,worker,customer,admin,kiosk -c green,blue,cyan,magenta,yellow --kill-others-on-fail \"npm run start:dev -w @bravoforest/api\" \"node scripts/wait-for-api.mjs && npm run worker:dev -w @bravoforest/api\" \"node scripts/wait-for-api.mjs && npm run dev -w @bravoforest/customer-web\" \"node scripts/wait-for-api.mjs && npm run dev -w @bravoforest/admin-web\" \"node scripts/wait-for-api.mjs && npm run dev -w @bravoforest/rvm-kiosk\"",
+    "predev:management": "powershell -NoProfile -ExecutionPolicy Bypass -File deploy/management/prepare-dev.ps1",
+    "dev:management": "concurrently -n api,worker,customer,admin -c green,blue,cyan,magenta --kill-others-on-fail \"npm run start:dev -w @bravoforest/api\" \"node scripts/wait-for-api.mjs && npm run worker:dev -w @bravoforest/api\" \"node scripts/wait-for-api.mjs && npm run dev -w @bravoforest/customer-web\" \"node scripts/wait-for-api.mjs && npm run dev -w @bravoforest/admin-web\"",
     "dev:pi-display": "npm run dev -w @bravoforest/rvm-kiosk",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

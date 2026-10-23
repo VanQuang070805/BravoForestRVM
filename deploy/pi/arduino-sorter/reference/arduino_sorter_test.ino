@@ -23,6 +23,8 @@ const int SERVO_CENTER = 90;
 const int SERVO_LEFT = 180;
 const int SERVO_RIGHT = 0;
 const unsigned long SERVO_HOLD_MS = 800;
+const unsigned long ULTRASONIC_DEBOUNCE_MS = 150;
+const unsigned long PROXIMITY_DEBOUNCE_MS = 300;
 
 // Nhieu module tiem can tra LOW khi phat hien kim loai.
 const bool PROXIMITY_ACTIVE_LEVEL = LOW;
@@ -30,7 +32,12 @@ const bool PROXIMITY_ACTIVE_LEVEL = LOW;
 Servo gateServo;
 bool lastUltrasonic = false;
 bool lastProximity = false;
+bool rawUltrasonic = false;
+bool rawProximity = false;
+unsigned long rawUltrasonicChangedMs = 0;
+unsigned long rawProximityChangedMs = 0;
 unsigned long lastSensorReadMs = 0;
+String activeServoDirection = "";
 
 enum ServoPhase { SERVO_IDLE, SERVO_HOLDING, SERVO_RETURNING };
 ServoPhase servoPhase = SERVO_IDLE;
@@ -63,10 +70,14 @@ void motorReverse() {
   digitalWrite(MOTOR_IN2, HIGH);
 }
 
-void startServoMove(int targetAngle) {
+void startServoMove(int targetAngle, const char* direction) {
+  if (servoPhase != SERVO_IDLE) return;
   gateServo.write(targetAngle);
+  activeServoDirection = direction;
   servoPhase = SERVO_HOLDING;
   servoPhaseStartedMs = millis();
+  Serial.print("SERVO:START:");
+  Serial.println(direction);
 }
 
 void updateServo() {
@@ -77,6 +88,9 @@ void updateServo() {
     servoPhaseStartedMs = millis();
   } else if (servoPhase == SERVO_RETURNING && elapsed >= 400) {
     servoPhase = SERVO_IDLE;
+    Serial.print("SERVO:DONE:");
+    Serial.println(activeServoDirection);
+    activeServoDirection = "";
   }
 }
 
@@ -85,8 +99,8 @@ void processCommand(String command) {
   if (command == "MOTOR:FORWARD") motorForward();
   else if (command == "MOTOR:REVERSE") motorReverse();
   else if (command == "MOTOR:STOP") motorStop();
-  else if (command == "SERVO:LEFT") startServoMove(SERVO_LEFT);
-  else if (command == "SERVO:RIGHT") startServoMove(SERVO_RIGHT);
+  else if (command == "SERVO:LEFT") startServoMove(SERVO_LEFT, "LEFT");
+  else if (command == "SERVO:RIGHT") startServoMove(SERVO_RIGHT, "RIGHT");
   else {
     Serial.print("UNKNOWN:");
     Serial.println(command);
@@ -112,8 +126,26 @@ void reportSensors() {
   if (millis() - lastSensorReadMs < 100) return;
   lastSensorReadMs = millis();
 
-  bool ultrasonicHasObject = readDistanceCm() <= STOP_DISTANCE_CM;
-  bool proximityHasCan = digitalRead(PROXIMITY_PIN) == PROXIMITY_ACTIVE_LEVEL;
+  bool sampledUltrasonic = readDistanceCm() <= STOP_DISTANCE_CM;
+  bool sampledProximity = digitalRead(PROXIMITY_PIN) == PROXIMITY_ACTIVE_LEVEL;
+
+  if (sampledUltrasonic != rawUltrasonic) {
+    rawUltrasonic = sampledUltrasonic;
+    rawUltrasonicChangedMs = millis();
+  }
+  if (sampledProximity != rawProximity) {
+    rawProximity = sampledProximity;
+    rawProximityChangedMs = millis();
+  }
+
+  bool ultrasonicHasObject = lastUltrasonic;
+  bool proximityHasCan = lastProximity;
+  if (rawUltrasonic != lastUltrasonic && millis() - rawUltrasonicChangedMs >= ULTRASONIC_DEBOUNCE_MS) {
+    ultrasonicHasObject = rawUltrasonic;
+  }
+  if (rawProximity != lastProximity && millis() - rawProximityChangedMs >= PROXIMITY_DEBOUNCE_MS) {
+    proximityHasCan = rawProximity;
+  }
 
   if (ultrasonicHasObject != lastUltrasonic) {
     lastUltrasonic = ultrasonicHasObject;
@@ -132,7 +164,7 @@ void setup() {
   pinMode(MOTOR_IN2, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(PROXIMITY_PIN, INPUT);
+  pinMode(PROXIMITY_PIN, INPUT_PULLUP);
 
   motorStop();
   gateServo.attach(SERVO_PIN);
@@ -140,8 +172,10 @@ void setup() {
   Serial.begin(115200);
 
   // Gui trang thai ban dau de Python khong phai cho den khi cam bien doi.
-  lastUltrasonic = readDistanceCm() <= STOP_DISTANCE_CM;
-  lastProximity = digitalRead(PROXIMITY_PIN) == PROXIMITY_ACTIVE_LEVEL;
+  rawUltrasonic = readDistanceCm() <= STOP_DISTANCE_CM;
+  rawProximity = digitalRead(PROXIMITY_PIN) == PROXIMITY_ACTIVE_LEVEL;
+  lastUltrasonic = rawUltrasonic;
+  lastProximity = rawProximity;
   Serial.print("ULTRASONIC:"); Serial.println(lastUltrasonic ? 1 : 0);
   Serial.print("PROXIMITY:"); Serial.println(lastProximity ? 1 : 0);
   Serial.println("READY");

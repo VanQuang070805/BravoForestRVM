@@ -22,8 +22,7 @@ const float GATE_DISTANCE_CM = 10.0F;
 const unsigned long SENSOR_INTERVAL_MS = 80;
 const unsigned long TELEMETRY_INTERVAL_MS = 500;
 const unsigned long MOTOR_TIMEOUT_MS = 10000;
-const unsigned long METAL_SETTLE_MS = 250;
-const unsigned long METAL_SAMPLE_MS = 500;
+const unsigned long SENSOR_CONFIRM_MS = 1000;
 const unsigned long METAL_SAMPLE_INTERVAL_MS = 20;
 const unsigned long SERVO_HOLD_MS = 900;
 const unsigned long SERVO_RETURN_MS = 650;
@@ -271,29 +270,26 @@ void updateFeeding(unsigned long now) {
   motorStop();
   Serial.print("EVENT AT_GATE ");
   Serial.println(objectName(currentObject));
-  if (currentObject == OBJECT_PET) {
-    startServoSort(true);
-  } else {
-    machineState = STATE_CHECKING_METAL;
-    stateStartedAt = now;
-    lastMetalSampleAt = now;
-    metalHits = 0;
-  }
+  // AI chỉ cho phép vật đi vào. Cặp cảm biến vật lý quyết định PET/CAN
+  // trong cửa sổ xác nhận một giây trước khi servo hoạt động.
+  machineState = STATE_CHECKING_METAL;
+  stateStartedAt = now;
+  lastMetalSampleAt = now;
+  metalHits = digitalRead(METAL_SENSOR_PIN) == METAL_ACTIVE_LEVEL ? 1 : 0;
 }
 
 void updateMetalCheck(unsigned long now) {
   const unsigned long elapsed = now - stateStartedAt;
-  if (elapsed < METAL_SETTLE_MS) return;
-
   if (now - lastMetalSampleAt >= METAL_SAMPLE_INTERVAL_MS) {
     lastMetalSampleAt = now;
     if (digitalRead(METAL_SENSOR_PIN) == METAL_ACTIVE_LEVEL && metalHits < 255) metalHits++;
   }
 
-  if (elapsed >= METAL_SETTLE_MS + METAL_SAMPLE_MS) {
+  if (elapsed >= SENSOR_CONFIRM_MS) {
     const bool metalDetected = metalHits >= METAL_REQUIRED_HITS;
     Serial.println(metalDetected ? "EVENT METAL_DETECTED" : "EVENT METAL_NOT_DETECTED");
-    startServoSort(metalDetected);
+    currentObject = metalDetected ? OBJECT_CAN : OBJECT_PET;
+    startServoSort(true);
   }
 }
 

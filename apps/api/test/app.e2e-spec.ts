@@ -39,6 +39,7 @@ describe('Auth API (e2e)', () => {
 
     expect(res.body).toEqual({ accessToken: 'access', expiresIn: '15m' });
     expect(res.headers['set-cookie'][0]).toMatch(/bf_customer_refresh_token=refresh;.*HttpOnly.*SameSite=Strict/);
+    expect(res.headers['set-cookie'][0]).not.toMatch(/Max-Age=/i);
     expect(auth.login).toHaveBeenCalledWith(
       { identifier: 'customer@example.test', password: 'test-only-password' },
       'customer',
@@ -52,6 +53,7 @@ describe('Auth API (e2e)', () => {
       .expect(201);
 
     expect(res.headers['set-cookie'][0]).toMatch(/bf_admin_refresh_token=refresh;.*HttpOnly.*SameSite=Strict/);
+    expect(res.headers['set-cookie'][0]).toMatch(/Max-Age=2592000/i);
     expect(auth.login).toHaveBeenLastCalledWith(
       { identifier: 'admin@example.test', password: 'test-only-password' },
       'admin',

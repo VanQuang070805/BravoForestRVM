@@ -15,9 +15,19 @@ while :; do
         case "$api_port" in
           ''|*[!0-9]*) ;;
           *)
-            api_ip=$(getent ahostsv4 "$api_host" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)
+            api_ip=''
+            for candidate_ip in $(getent ahostsv4 "$api_host" 2>/dev/null | awk '{ print $1 }' | sort -u); do
+              case "$candidate_ip" in
+                ''|*[!0-9.]*) continue ;;
+              esac
+              if curl -fsS --connect-timeout 1 --max-time 3 \
+                "http://${candidate_ip}:${api_port}/api/v1/health/ready" >/dev/null 2>&1; then
+                api_ip=$candidate_ip
+                break
+              fi
+            done
             case "$api_ip" in
-              ''|*[!0-9.]*) ;;
+              '') ;;
               *)
                 current_url=$(sed -n 's/^MANAGEMENT_API_URL=//p' "$env_file" | tail -n 1 | tr -d '\r"')
                 desired_url="http://${api_ip}:${api_port}/api/v1"

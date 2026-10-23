@@ -1,4 +1,4 @@
-const base = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
+const configuredBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
 const tokenKey = 'bravoforest_access_token';
 const signedOutKey = 'bravoforest_signed_out';
 const refreshLockName = 'bravoforest:customer-auth-refresh:v1';
@@ -16,6 +16,40 @@ const noRefreshPaths = new Set([
   '/auth/customer/logout',
 ]);
 let accessToken: string | null = null;
+
+function apiBase() {
+  if (!configuredBase) return undefined;
+  if (typeof window === 'undefined') return configuredBase;
+  try {
+    const url = new URL(configuredBase);
+    const pageHost = window.location.hostname;
+    if (
+      ['localhost', '127.0.0.1'].includes(url.hostname)
+      && !['localhost', '127.0.0.1'].includes(pageHost)
+    ) {
+      url.hostname = pageHost;
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    return configuredBase;
+  }
+  return configuredBase;
+}
+
+async function fetchApi(url: string, init: RequestInit, retryNetwork = false) {
+  const attempts = retryNetwork ? 3 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if (attempt === attempts) {
+        throw new ApiError('Không thể kết nối máy chủ. Vui lòng kiểm tra API và kết nối mạng.', 503);
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+  throw new ApiError('Không thể kết nối máy chủ.', 503);
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -69,8 +103,9 @@ function clearSignedOut() {
 }
 
 function refreshWithCookie() {
+  const base = apiBase();
   if (!base) throw new ApiError('Thiếu NEXT_PUBLIC_API_URL.', 503);
-  return fetch(`${base}/auth/customer/refresh`, {
+  return fetchApi(`${base}/auth/customer/refresh`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -102,6 +137,7 @@ async function decode<T>(response: Response): Promise<T> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  const base = apiBase();
   if (!base) throw new ApiError('Thiếu NEXT_PUBLIC_API_URL.', 503);
 
   const headers = new Headers(init.headers);
@@ -109,12 +145,13 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   const current = token();
   if (current) headers.set('Authorization', `Bearer ${current}`);
 
-  const response = await fetch(`${base}${path}`, {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const response = await fetchApi(`${base}${path}`, {
     ...init,
     headers,
     credentials: 'include',
     cache: 'no-store',
-  });
+  }, method === 'GET' || method === 'HEAD');
 
   if (response.status === 401 && retry && !noRefreshPaths.has(path) && !isSignedOut()) {
     try {

@@ -3,7 +3,12 @@ import { randomUUID } from 'crypto';
 function machineHeaders(extra?: Record<string, string>) {
   const machineId = process.env.RVM_MACHINE_ID;
   const apiKey = process.env.RVM_API_KEY;
-  if (!machineId || !apiKey) throw new Error('Máy RVM chưa được cấu hình mã máy và API key.');
+  if (!machineId || !/^\d+$/.test(machineId) || Number(machineId) < 1) {
+    throw new Error('Mã máy RVM chưa được cấu hình đúng. Hãy kiểm tra RVM_MACHINE_ID.');
+  }
+  if (!apiKey || apiKey.length < 20 || /replace-with|your-api-key|change-me/i.test(apiKey)) {
+    throw new Error('API key của máy RVM chưa được cấu hình đúng. Hãy cấp key trong trang quản trị.');
+  }
   return {
     'content-type': 'application/json',
     'x-machine-id': machineId,
@@ -15,7 +20,15 @@ function machineHeaders(extra?: Record<string, string>) {
 }
 
 function apiUrl() {
-  return process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+  const configuredUrl = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL;
+  if (!configuredUrl) throw new Error('Chưa cấu hình địa chỉ API quản lý cho kiosk.');
+  try {
+    const parsed = new URL(configuredUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('invalid protocol');
+  } catch {
+    throw new Error('Địa chỉ API quản lý của kiosk không hợp lệ.');
+  }
+  return configuredUrl.replace(/\/$/, '');
 }
 
 async function proxy(upstream: Response) {
@@ -28,7 +41,14 @@ async function machineRequest(path: string, init?: RequestInit) {
     ...init,
     headers: machineHeaders(init?.headers as Record<string, string> | undefined),
     cache: 'no-store',
+    signal: init?.signal ?? AbortSignal.timeout(6000),
   });
+}
+
+function machineErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  if (message && !/fetch failed|aborted|timeout/i.test(message)) return message;
+  return 'Không thể kết nối máy chủ quản lý. Hãy kiểm tra API và kết nối mạng.';
 }
 
 function validSessionId(value: unknown): value is string {
@@ -42,7 +62,7 @@ export async function GET(request: Request) {
     return Response.json({ message: 'Yêu cầu không hợp lệ.' }, { status: 400, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json(
-      { message: error instanceof Error ? error.message : 'Không thể kết nối máy RVM.' },
+      { message: machineErrorMessage(error) },
       { status: 503, headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -106,7 +126,7 @@ export async function POST(request: Request) {
     return Response.json({ message: 'Yêu cầu không hợp lệ.' }, { status: 400 });
   } catch (error) {
     return Response.json(
-      { message: error instanceof Error ? error.message : 'Không thể kết nối máy RVM.' },
+      { message: machineErrorMessage(error) },
       { status: 503, headers: { 'Cache-Control': 'no-store' } },
     );
   }
